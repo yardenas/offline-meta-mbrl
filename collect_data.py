@@ -39,15 +39,16 @@ class Buffer:
         self.rewards[trial, episode, step] = reward
 
 
-def trial(num_episodes, gravity, append_fn):
-    """Collects episodes for a given gravity variable."""
+def trial(num_episodes, rod_length, append_fn):
+    """Collects episodes for a given rod length variable."""
     env = gym.make(
         "Pendulum-v1",
-        g=gravity,
+        g=rod_length,
         render_mode="human",
         max_episode_steps=EPISODE_STEPS,
     )
     env = RescaleAction(env, min_action=-1.0, max_action=1.0)
+    env.unwrapped.l = rod_length  # type: ignore  # noqa: E741
     episode_count = 0
     step = 0
     obs, _ = env.reset()
@@ -68,7 +69,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-episodes", type=int, default=1)
     parser.add_argument("--num_trials", type=int, default=25)
-    parser.add_argument("--seed", type=int, default=666)
+    parser.add_argument("--seed", type=int, default=123)
     args = parser.parse_args()
     dummy = gym.make("Pendulum-v1")
     data = Buffer(
@@ -78,7 +79,7 @@ def main():
         dummy.action_space.shape,
     )
     rng = np.random.default_rng(args.seed)
-    for trial_id, gravity in enumerate(rng.uniform(0.1, 15, args.num_trials)):
+    for trial_id, gravity in enumerate(rng.uniform(0.1, 2, args.num_trials)):
         append = functools.partial(data.append, trial_id)
         trial(args.num_episodes, gravity, append)
     now_str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
