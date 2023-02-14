@@ -89,7 +89,6 @@ def kernel_DPLR(_lambda, p, q, b, c, step, sequence_length):
     # Evaluate at roots of unity
     # Generating function is (-)z-transform, so we evaluate at (-)root
     omega_l = np.exp((-2j * np.pi) * (np.arange(sequence_length) / sequence_length))
-
     aterm = (c.conj(), q.conj())
     bterm = (b, p)
 
@@ -102,7 +101,7 @@ def kernel_DPLR(_lambda, p, q, b, c, step, sequence_length):
     k10 = cauchy(aterm[1] * bterm[0], g, _lambda)
     k11 = cauchy(aterm[1] * bterm[1], g, _lambda)
     roots = c * (k00 - k01 * (1.0 / (1.0 + k11)) * k10)
-    out = np.fft.ifft(roots, sequence_length).reshape(sequence_length)
+    out = jnp.fft.ifft(roots, sequence_length).reshape(sequence_length)
     return out.real
 
 
@@ -140,14 +139,15 @@ class S4Cell(eqx.Module):
         return x_k, y_k + self.d * u_k
 
     def multistep(self, u, nofft=False):
+        k = self.k
         if nofft:
-            return jnp.convolve(u, self.k, mode="full")[: u.shape[0]]
+            return jnp.convolve(u, k, mode="full")[: u.shape[0]]
         else:
-            assert self.k.shape[0] == u.shape[0]
-            ud = jnp.fft.rfft(np.pad(u, (0, self.k.shape[0])))
-            kd = jnp.fft.rfft(np.pad(self.k, (0, u.shape[0])))
+            assert k.shape[0] == u.shape[0]
+            ud = jnp.fft.rfft(jnp.pad(u, (0, k.shape[0])))
+            kd = jnp.fft.rfft(jnp.pad(k, (0, u.shape[0])))
             out = ud * kd
-            return jnp.fft.irfft(out)[: u.shape[0]]
+            return jnp.fft.irfft(out)[: u.shape[0]] + self.d * u
 
     @property
     def k(self):
@@ -157,7 +157,7 @@ class S4Cell(eqx.Module):
             self.p,
             self.b,
             self.c,
-            self.step,
+            jnp.exp(self.step),
             self.sequence_length,
         )
 
