@@ -340,7 +340,7 @@ if __name__ == "__main__":
             y2 = np.concatenate([obs[:, :, 12:], rewards[:, :, 11:, None]], axis=-1)
             return (x1, y1), (x2, y2)
 
-    obs, action, rewards = np.load("data-50-1-2023-02-13-12:05.npz").values()
+    obs, action, rewards = np.load("data-10-2-2023-02-08-20:01.npz").values()
 
     def normalize(x):
         mean = x.mean(axis=(0, 1))
@@ -361,7 +361,7 @@ if __name__ == "__main__":
         )
         return mu, stddev * jnp.ones_like(mu)
 
-    dataset = Dataset(obs, action, rewards, meta_batch_size=4, num_train_shots=1)
+    dataset = Dataset(obs, action, rewards, meta_batch_size=4, num_train_shots=2)
     example = next(dataset.train_set)[0][0]
     init, apply = hk.without_apply_rng(hk.transform(net))
     seed_sequence = hk.PRNGSequence(666)
