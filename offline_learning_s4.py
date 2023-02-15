@@ -12,6 +12,7 @@ class SequenceBlock(eqx.Module):
     cell: s4.S4Cell
     out: eqx.nn.Linear
     out2: eqx.nn.Linear
+    norm: eqx.nn.LayerNorm
     hippo_n: int
 
     def __init__(self, hidden_size, hippo_n, sequence_length, *, key):
@@ -19,12 +20,16 @@ class SequenceBlock(eqx.Module):
         self.cell = s4.S4Cell(hippo_n, sequence_length, key=cell_key)
         self.out = eqx.nn.Linear(hidden_size, hidden_size, key=encoder_key)
         self.out2 = eqx.nn.Linear(hidden_size, hidden_size, key=decoder_key)
+        self.norm = eqx.nn.LayerNorm(
+            hidden_size,
+        )
         self.hippo_n = hippo_n
 
     def __call__(self, x, *, key=None):
         skip = x
-        out = jax.vmap(self.cell.multistep, in_axes=(1,), out_axes=1)(x)
-        x = jnn.gelu(out)
+        x = jax.vmap(self.norm)(x)
+        x = jax.vmap(self.cell.multistep, in_axes=(1,), out_axes=1)(x)
+        x = jnn.gelu(x)
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
         return skip + x
 
@@ -48,7 +53,7 @@ class Model(eqx.Module):
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
     def __call__(self, x):
-        x = jnn.relu(jax.vmap(self.encoder)(x))
+        x = jax.vmap(self.encoder)(x)
         x = self.layers(x)
         x = x.mean(axis=0)
         x = self.decoder(x)
@@ -152,7 +157,7 @@ def main(
             nodes.append(layer.cell.d)
         return nodes
 
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def make_step(model, x, y, opt_state):
         loss, grads = compute_loss(model, x, y)
         grads = eqx.tree_at(cells, grads, replace_fn=lambda x: x * 1.0)
