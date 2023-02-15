@@ -134,7 +134,7 @@ class S4Cell(eqx.Module):
         y_k = cb @ x_k
         return x_k, y_k + self.d * u_k
 
-    def multistep(self, u, nofft=False):
+    def multistep(self, u, fft=True):
         k = kernel_DPLR(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
@@ -144,14 +144,14 @@ class S4Cell(eqx.Module):
             jnp.exp(self.step),
             u.shape[0],
         )
-        if nofft:
-            return jnp.convolve(u, k, mode="full")[: u.shape[0]]
-        else:
+        if fft:
             assert k.shape[0] == u.shape[0]
             ud = jnp.fft.rfft(jnp.pad(u, (0, k.shape[0])))
             kd = jnp.fft.rfft(jnp.pad(k, (0, u.shape[0])))
             out = ud * kd
             return jnp.fft.irfft(out)[: u.shape[0]] + self.d * u
+        else:
+            return jnp.convolve(u, k, mode="full")[: u.shape[0]]
 
     def ssm(self, sequence_length):
         ssm = discrete_DPLR(
