@@ -113,9 +113,8 @@ class S4Cell(eqx.Module):
     c: jnp.ndarray
     d: jnp.ndarray
     step: jnp.ndarray
-    sequence_length: int
 
-    def __init__(self, hippo_n, sequence_length, *, key):
+    def __init__(self, hippo_n, *, key):
         _lambda_real, _lambda_imag, p, b = hippo_initializer(hippo_n)
         self.lambda_real = _lambda_real
         self.lambda_imag = _lambda_imag
@@ -126,11 +125,8 @@ class S4Cell(eqx.Module):
         self.d = jnp.ones((1,))
         key, _ = jax.random.split(key)
         self.step = log_step_initializer(key, (1,))
-        self.sequence_length = sequence_length
 
-    def __call__(self, x_k_1, u_k, ssm=None):
-        if ssm is None:
-            ssm = self.ssm
+    def __call__(self, x_k_1, u_k, ssm):
         ab, bb, cb = ssm
         if u_k.ndim == 0:
             u_k = u_k[None]
@@ -139,7 +135,15 @@ class S4Cell(eqx.Module):
         return x_k, y_k + self.d * u_k
 
     def multistep(self, u, nofft=False):
-        k = self.k
+        k = kernel_DPLR(
+            jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
+            self.p,
+            self.p,
+            self.b,
+            self.c,
+            jnp.exp(self.step),
+            u.shape[0],
+        )
         if nofft:
             return jnp.convolve(u, k, mode="full")[: u.shape[0]]
         else:
@@ -149,20 +153,7 @@ class S4Cell(eqx.Module):
             out = ud * kd
             return jnp.fft.irfft(out)[: u.shape[0]] + self.d * u
 
-    @property
-    def k(self):
-        return kernel_DPLR(
-            jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
-            self.p,
-            self.p,
-            self.b,
-            self.c,
-            jnp.exp(self.step),
-            self.sequence_length,
-        )
-
-    @property
-    def ssm(self):
+    def ssm(self, sequence_length):
         ssm = discrete_DPLR(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
@@ -170,6 +161,6 @@ class S4Cell(eqx.Module):
             self.b,
             self.c,
             jnp.exp(self.step),
-            self.sequence_length,
+            sequence_length,
         )
         return ssm

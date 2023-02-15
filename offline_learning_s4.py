@@ -15,9 +15,9 @@ class SequenceBlock(eqx.Module):
     norm: eqx.nn.LayerNorm
     hippo_n: int
 
-    def __init__(self, hidden_size, hippo_n, sequence_length, *, key):
+    def __init__(self, hidden_size, hippo_n, *, key):
         cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
-        self.cell = s4.S4Cell(hippo_n, sequence_length, key=cell_key)
+        self.cell = s4.S4Cell(hippo_n, key=cell_key)
         self.out = eqx.nn.Linear(hidden_size, hidden_size, key=encoder_key)
         self.out2 = eqx.nn.Linear(hidden_size, hidden_size, key=decoder_key)
         self.norm = eqx.nn.LayerNorm(
@@ -44,10 +44,7 @@ class Model(eqx.Module):
     ):
         keys = jax.random.split(key, n_layers + 2)
         self.layers = eqx.nn.Sequential(
-            [
-                SequenceBlock(hidden_size, hippo_n, sequence_length, key=key)
-                for key in keys[:n_layers]
-            ]
+            [SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]]
         )
         self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
