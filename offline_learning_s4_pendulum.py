@@ -1,3 +1,5 @@
+from typing import List
+
 import equinox as eqx
 import jax
 import jax.nn as jnn
@@ -13,7 +15,6 @@ class SequenceBlock(eqx.Module):
     out: eqx.nn.Linear
     out2: eqx.nn.Linear
     norm: eqx.nn.LayerNorm
-    hippo_n: int
 
     def __init__(self, hidden_size, hippo_n, *, key):
         cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
@@ -23,38 +24,43 @@ class SequenceBlock(eqx.Module):
         self.norm = eqx.nn.LayerNorm(
             hidden_size,
         )
-        self.hippo_n = hippo_n
 
-    def __call__(self, x, *, key=None):
+    def __call__(self, x, convolve=False, *, key=None):
         skip = x
         x = jax.vmap(self.norm)(x)
-        x = jax.vmap(self.cell.convolve, in_axes=(1,), out_axes=1)(x)
-        x = jnn.gelu(x)
+        if convolve:
+            pred_fn = self.cell.convolve
+        else:
+            fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
+            pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)[1].squeeze(-1)
+        pred_fn = jax.vmap(pred_fn, in_axes=(1,), out_axes=1)
+        x = jnn.gelu(pred_fn(x))
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
         return skip + x
 
+    def single_step(self, x, convolve=False):
+        pass
+
 
 class Model(eqx.Module):
-    layers: eqx.nn.Sequential
+    layers: List[SequenceBlock]
     encoder: eqx.nn.Linear
     decoder: eqx.nn.Linear
 
-    def __init__(
-        self, n_layers, in_size, out_size, hippo_n, sequence_length, hidden_size, *, key
-    ):
+    def __init__(self, n_layers, in_size, out_size, hippo_n, hidden_size, *, key):
         keys = jax.random.split(key, n_layers + 2)
-        self.layers = eqx.nn.Sequential(
-            [SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]]
-        )
+        self.layers = [
+            SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]
+        ]
         self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
-    def __call__(self, x):
+    def __call__(self, x, convolve=False, *, key=None):
         x = jax.vmap(self.encoder)(x)
-        x = self.layers(x)
-        x = x.mean(axis=0)
-        x = self.decoder(x)
-        return jnn.sigmoid(x)
+        for layer in self.layers:
+            x = layer(x, convolve=convolve)
+        x = jax.vmap(self.decoder)(x)
+        return x
 
 
 def dataloader(arrays, batch_size, *, key):
@@ -68,28 +74,40 @@ def dataloader(arrays, batch_size, *, key):
         end = batch_size
         while end < dataset_size:
             batch_perm = perm[start:end]
-            yield tuple(array[batch_perm] for array in arrays)
+            obs, next_obs, acs, rews = tuple(array[batch_perm] for array in arrays)
+            yield np.concatenate((obs, acs), -1), np.concatenate(
+                (next_obs, rews[..., None]), -1
+            )
             start = end
             end = start + batch_size
 
 
-def get_data(dataset_size, sequence_length, *, key):
-    t = jnp.linspace(0, 2 * np.pi, sequence_length)
-    offset = jax.random.uniform(key, (dataset_size, 1), minval=0, maxval=2 * np.pi)
-    x1 = jnp.sin(t + offset) / (1 + t)
-    x2 = jnp.cos(t + offset) / (1 + t)
-    y = jnp.ones((dataset_size, 1))
+def get_data(data_path, sequence_length):
+    obs, action, reward = np.load(data_path).values()
+    obs, action, reward = [x.squeeze(0) for x in (obs, action, reward)]
 
-    half_dataset_size = dataset_size // 2
-    x1 = x1.at[:half_dataset_size].multiply(-1)
-    y = y.at[:half_dataset_size].set(0)
-    x = jnp.stack([x1, x2], axis=-1)
+    def normalize(x):
+        mean = x.mean(axis=(0))
+        stddev = x.std(axis=(0))
+        return (x - mean) / (stddev + 1e-8), mean, stddev
 
-    return x, y
+    obs, *_ = normalize(obs)
+    action, *_ = normalize(action)
+    reward, *_ = normalize(reward)
+    all_obs, all_next_obs, all_acs, all_rews = [], [], [], []
+    for t in range(action.shape[1] - sequence_length):
+        all_obs.append(obs[:, t : t + sequence_length])
+        all_next_obs.append(obs[:, t + 1 : t + sequence_length + 1])
+        all_rews.append(reward[:, t : t + sequence_length])
+        all_acs.append(action[:, t : t + sequence_length])
+    obs, next_obs, acs, rews = map(
+        lambda x: np.concatenate(x, axis=0), (all_obs, all_next_obs, all_acs, all_rews)  # type: ignore # noqa: E501
+    )
+    return obs, next_obs, acs, rews
 
 
 def main(
-    dataset_size=10000,
+    data_path="data-1-25-2023-02-15-15:46.npz",
     batch_size=32,
     learning_rate=1e-3,
     steps=200,
@@ -97,25 +115,25 @@ def main(
     sequence_length=16,
     seed=777,
 ):
-    data_key, loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 3)
-    xs, ys = get_data(dataset_size, sequence_length, key=data_key)
-    iter_data = dataloader((xs, ys), batch_size, key=loader_key)
+    loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 2)
+    data = get_data(data_path, sequence_length)
+    iter_data = dataloader(data, batch_size, key=loader_key)
 
     model = Model(
         n_layers=4,
-        in_size=2,
-        out_size=1,
+        in_size=4,
+        out_size=4,
         hidden_size=hidden_size,
         key=model_key,
         hippo_n=64,
-        sequence_length=16,
     )
 
     @eqx.filter_value_and_grad
     def compute_loss(model, x, y):
-        pred_y = jax.vmap(model)(x).astype(jnp.float32)
-        # Trains with respect to binary cross-entropy
-        return -jnp.mean(y * jnp.log(pred_y) + (1 - y) * jnp.log(1 - pred_y))
+        y_hat = jax.vmap(lambda x: model(x, False))(x)
+        # Trains with respect to L2 loss
+        error = y_hat - y
+        return 0.5 * (error**2).mean()
 
     # Important for efficiency whenever you use JAX: wrap everything
     # into a single JIT region.
@@ -144,11 +162,6 @@ def main(
         loss, model, opt_state = make_step(model, x, y, opt_state)
         loss = loss.item()
         print(f"step={step}, loss={loss}")
-
-    pred_ys = jax.vmap(model)(xs)
-    num_correct = jnp.sum((pred_ys > 0.5) == ys)
-    final_accuracy = (num_correct / dataset_size).item()
-    print(f"final_accuracy={final_accuracy}")
 
 
 if __name__ == "__main__":

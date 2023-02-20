@@ -67,7 +67,7 @@ def trial(num_episodes, rod_length, append_fn):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num-episodes", type=int, default=1)
+    parser.add_argument("--num_episodes", type=int, default=1)
     parser.add_argument("--num_trials", type=int, default=25)
     parser.add_argument("--seed", type=int, default=123)
     args = parser.parse_args()

@@ -6,9 +6,9 @@ import s4
 
 def test_rnn_cnn(n=8, sequence_length=16):
     u = np.arange(sequence_length) * 1.0
-    cell = s4.S4Cell(n, sequence_length, key=jax.random.PRNGKey(666))
-    y_cnn = cell.multistep(u)
-    ssm = cell.ssm
+    cell = s4.S4Cell(n, key=jax.random.PRNGKey(666))
+    y_cnn = cell.convolve(u)
+    ssm = cell.ssm(sequence_length)
 
     def sequence(x):
         fn = lambda carry, x: cell(carry, x, ssm)
