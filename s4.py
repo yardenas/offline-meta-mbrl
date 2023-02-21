@@ -105,6 +105,20 @@ def kernel_DPLR(_lambda, p, q, b, c, step, sequence_length):
     return out.real
 
 
+def _convolve(_lambda, p, b, c, d, step, u):
+    k = kernel_DPLR(
+        _lambda,
+        p,
+        p,
+        b,
+        c,
+        step,
+        u.shape[0],
+    )
+    out = jnp.convolve(u, k, mode="full")[: u.shape[0]] + d * u
+    return out.real
+
+
 class S4Cell(eqx.Module):
     lambda_real: jnp.ndarray
     lambda_imag: jnp.ndarray
@@ -114,41 +128,49 @@ class S4Cell(eqx.Module):
     d: jnp.ndarray
     step: jnp.ndarray
 
-    def __init__(self, hippo_n, *, key):
-        _lambda_real, _lambda_imag, p, b = hippo_initializer(hippo_n)
+    def __init__(self, hippo_n, input_size, *, key):
+        hippo_params = hippo_initializer(hippo_n)
+        _lambda_real, _lambda_imag, p, b = [
+            jnp.tile(x, (input_size, 1)) for x in hippo_params
+        ]
         self.lambda_real = _lambda_real
         self.lambda_imag = _lambda_imag
         self.p = p
         self.b = b
-        c = jax.random.normal(key, (hippo_n, 2)) * (0.5**0.5)
+        c = jax.random.normal(key, (input_size, hippo_n, 2)) * (0.5**0.5)
         self.c = c[..., 0] + 1j * c[..., 1]
-        self.d = jnp.ones((1,))
+        self.d = jnp.ones((input_size, 1))
         key, _ = jax.random.split(key)
-        self.step = log_step_initializer(key, (1,))
+        self.step = log_step_initializer(
+            key,
+            (
+                input_size,
+                1,
+            ),
+        )
 
+    @jax.vmap
     def __call__(self, x_k_1, u_k, ssm):
         ab, bb, cb = ssm
         if u_k.ndim == 0:
             u_k = u_k[None]
         x_k = ab @ x_k_1 + bb @ u_k
         y_k = cb @ x_k
-        return x_k, (y_k + self.d * u_k).real
+        return x_k, (y_k + self.d * u_k).real.squeeze(-1)
 
     def convolve(self, u):
-        k = kernel_DPLR(
+        return jax.vmap(_convolve, (0,) * 6 + (1,), 1)(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
-            self.p,
             self.p,
             self.b,
             self.c,
+            self.d,
             jnp.exp(self.step),
-            u.shape[0],
+            u,
         )
-        out = jnp.convolve(u, k, mode="full")[: u.shape[0]] + self.d * u
-        return out.real
 
     def ssm(self, sequence_length):
-        ssm = discrete_DPLR(
+        return jax.vmap(discrete_DPLR, in_axes=(0,) * 6 + (None,))(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
             self.p,
@@ -157,7 +179,6 @@ class S4Cell(eqx.Module):
             jnp.exp(self.step),
             sequence_length,
         )
-        return ssm
 
     @property
     def init_state(self):

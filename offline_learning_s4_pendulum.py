@@ -18,7 +18,7 @@ class SequenceBlock(eqx.Module):
 
     def __init__(self, hidden_size, hippo_n, *, key):
         cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
-        self.cell = s4.S4Cell(hippo_n, key=cell_key)
+        self.cell = s4.S4Cell(hippo_n, hidden_size, key=cell_key)
         self.out = eqx.nn.Linear(hidden_size, hidden_size, key=encoder_key)
         self.out2 = eqx.nn.Linear(hidden_size, hidden_size, key=decoder_key)
         self.norm = eqx.nn.LayerNorm(
@@ -32,14 +32,18 @@ class SequenceBlock(eqx.Module):
             pred_fn = self.cell.convolve
         else:
             fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
-            pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)[1].squeeze(-1)
-        pred_fn = jax.vmap(pred_fn, in_axes=(1,), out_axes=1)
+            pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)[1]
         x = jnn.gelu(pred_fn(x))
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
         return skip + x
 
-    def single_step(self, x, convolve=False):
-        pass
+    def step(self, hidden, x, ssm):
+        skip = x
+        x = self.norm(x)
+        hidden, x = self.cell(hidden, x, ssm)
+        x = jnn.gelu(x)
+        x = self.out(x) * jnn.sigmoid(self.out2(x))
+        return hidden, skip + x
 
 
 class Model(eqx.Module):
@@ -61,6 +65,24 @@ class Model(eqx.Module):
             x = layer(x, convolve=convolve)
         x = jax.vmap(self.decoder)(x)
         return x
+
+    def sample(self, initial_state, action_sequence, *, key=None):
+        ssms = [layer.cell.ssm(action_sequence.shape[0]) for layer in self.layers]
+
+        def f(carry, x):
+            state, carry = carry
+            x = jnp.concatenate([state, x], -1)
+            x = self.encoder(x)
+            out_carry = []
+            for layer_hidden, ssm, layer in zip(carry, ssms, self.layers):
+                layer_hidden, x = layer.step(layer_hidden, x, ssm)
+                out_carry.append(layer_hidden)
+            x = self.decoder(x)
+            return (x[:-1], out_carry), x
+
+        init = initial_state, [layer.cell.init_state for layer in self.layers]
+        _, out = jax.lax.scan(f, init, action_sequence)
+        return out
 
 
 def dataloader(arrays, batch_size, *, key):
@@ -130,7 +152,7 @@ def main(
 
     @eqx.filter_value_and_grad
     def compute_loss(model, x, y):
-        y_hat = jax.vmap(lambda x: model(x, False))(x)
+        y_hat = jax.vmap(lambda x: model(x, True))(x)
         # Trains with respect to L2 loss
         error = y_hat - y
         return 0.5 * (error**2).mean()
@@ -162,6 +184,10 @@ def main(
         loss, model, opt_state = make_step(model, x, y, opt_state)
         loss = loss.item()
         print(f"step={step}, loss={loss}")
+    x, y = next(iter_data)
+    initial_state = x[:, 0, :-1]
+    action_sequence = x[..., -1:]
+    jax.vmap(model.sample)(initial_state, action_sequence)
 
 
 if __name__ == "__main__":
