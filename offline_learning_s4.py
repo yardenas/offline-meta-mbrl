@@ -1,3 +1,5 @@
+from typing import List
+
 import equinox as eqx
 import jax
 import jax.nn as jnn
@@ -17,7 +19,7 @@ class SequenceBlock(eqx.Module):
 
     def __init__(self, hidden_size, hippo_n, *, key):
         cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
-        self.cell = s4.S4Cell(hippo_n, key=cell_key)
+        self.cell = s4.S4Cell(hippo_n, hidden_size, key=cell_key)
         self.out = eqx.nn.Linear(hidden_size, hidden_size, key=encoder_key)
         self.out2 = eqx.nn.Linear(hidden_size, hidden_size, key=decoder_key)
         self.norm = eqx.nn.LayerNorm(
@@ -25,35 +27,45 @@ class SequenceBlock(eqx.Module):
         )
         self.hippo_n = hippo_n
 
-    def __call__(self, x, *, key=None):
+    def __call__(self, x, convolve=False, *, key=None):
         skip = x
         x = jax.vmap(self.norm)(x)
-        x = jax.vmap(self.cell.convolve, in_axes=(1,), out_axes=1)(x)
-        x = jnn.gelu(x)
+        if convolve:
+            pred_fn = self.cell.convolve
+        else:
+            fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
+            pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)[1]
+        x = jnn.gelu(pred_fn(x))
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
         return skip + x
 
+    def step(self, hidden, x, ssm):
+        skip = x
+        x = self.norm(x)
+        hidden, x = self.cell(hidden, x, ssm)
+        x = jnn.gelu(x)
+        x = self.out(x) * jnn.sigmoid(self.out2(x))
+        return hidden, skip + x
+
 
 class Model(eqx.Module):
-    layers: eqx.nn.Sequential
+    layers: List[SequenceBlock]
     encoder: eqx.nn.Linear
     decoder: eqx.nn.Linear
 
-    def __init__(
-        self, n_layers, in_size, out_size, hippo_n, sequence_length, hidden_size, *, key
-    ):
+    def __init__(self, n_layers, in_size, out_size, hippo_n, hidden_size, *, key):
         keys = jax.random.split(key, n_layers + 2)
-        self.layers = eqx.nn.Sequential(
-            [SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]]
-        )
+        self.layers = [
+            SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]
+        ]
         self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
-    def __call__(self, x):
+    def __call__(self, x, convolve=False, *, key=None):
         x = jax.vmap(self.encoder)(x)
-        x = self.layers(x)
-        x = x.mean(axis=0)
-        x = self.decoder(x)
+        for layer in self.layers:
+            x = layer(x, convolve=convolve)
+        x = self.decoder(x.mean(0))
         return jnn.sigmoid(x)
 
 
@@ -108,12 +120,11 @@ def main(
         hidden_size=hidden_size,
         key=model_key,
         hippo_n=64,
-        sequence_length=16,
     )
 
     @eqx.filter_value_and_grad
     def compute_loss(model, x, y):
-        pred_y = jax.vmap(model)(x).astype(jnp.float32)
+        pred_y = jax.vmap(lambda x: model(x, True))(x).astype(jnp.float32)
         # Trains with respect to binary cross-entropy
         return -jnp.mean(y * jnp.log(pred_y) + (1 - y) * jnp.log(1 - pred_y))
 
