@@ -75,3 +75,34 @@ def test_kernels(n=8, sequence_length=16, input_size=5, mode="cell"):
 
     k2 = jax.vmap(K_conv, (0, 0, 0, None))(ab, bb, cb, sequence_length)
     assert np.allclose(k.real, k2.real, atol=1e-5, rtol=1e-5)
+
+
+def test_fft_mode(n=8, sequence_length=16, input_size=5):
+    cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+    _lambda = cell.lambda_real + 1j * cell.lambda_imag
+    p = cell.p
+    b = cell.b
+    c = cell.c
+    step = jax.numpy.exp(cell.step)
+    k = jax.vmap(s4.kernel_DPLR, (0, 0, 0, 0, 0, 0, None))(
+        _lambda, p, p, b, c, step, sequence_length
+    )
+    u = jax.numpy.ones((sequence_length, input_size))
+
+    def fft(u, k):
+        ud = jax.numpy.fft.rfft(jax.numpy.pad(u, (0, k.shape[0])))
+        Kd = jax.numpy.fft.rfft(jax.numpy.pad(k, (0, u.shape[0])))
+        out = ud * Kd
+        return jax.numpy.fft.irfft(out)[: u.shape[0]]
+
+    y1 = jax.vmap(fft, (1, 0), 1)(u, k) + cell.d * u
+    y2 = cell.convolve(u)
+    assert np.allclose(y1.real, y2.real, atol=1e-4, rtol=1e-4)
+
+
+def test_fft_mode_np(n=8, sequence_length=16, input_size=5):
+    cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+    u = jax.numpy.ones((sequence_length, input_size))
+    y1 = cell.convolve(u, True)
+    y2 = cell.convolve(u, False)
+    assert jax.numpy.allclose(y1, y2, atol=1e-4, rtol=1e-4)

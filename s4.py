@@ -105,7 +105,7 @@ def kernel_DPLR(_lambda, p, q, b, c, step, sequence_length):
     return out.real
 
 
-def _convolve(_lambda, p, b, c, d, step, u):
+def _convolve(_lambda, p, b, c, d, step, u, fft):
     k = kernel_DPLR(
         _lambda,
         p,
@@ -115,8 +115,14 @@ def _convolve(_lambda, p, b, c, d, step, u):
         step,
         u.shape[0],
     )
-    out = jnp.convolve(u, k, mode="full")[: u.shape[0]] + d * u
-    return out.real
+    if fft:
+        ud = jnp.fft.rfft(jnp.pad(u, (0, k.shape[0])))
+        Kd = jnp.fft.rfft(jnp.pad(k, (0, u.shape[0])))
+        out = ud * Kd
+        out = jnp.fft.irfft(out)[: u.shape[0]]
+    else:
+        out = jnp.convolve(u, k, mode="full")[: u.shape[0]]
+    return (out + d * u).real
 
 
 class S4Cell(eqx.Module):
@@ -158,8 +164,8 @@ class S4Cell(eqx.Module):
         y_k = cb @ x_k
         return x_k, (y_k + self.d * u_k).real.squeeze(-1)
 
-    def convolve(self, u):
-        return jax.vmap(_convolve, (0,) * 6 + (1,), 1)(
+    def convolve(self, u, fft=False):
+        return jax.vmap(_convolve, (0,) * 6 + (1, None), 1)(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
             self.b,
@@ -167,6 +173,7 @@ class S4Cell(eqx.Module):
             self.d,
             jnp.exp(self.step),
             u,
+            fft,
         )
 
     def ssm(self, sequence_length):
