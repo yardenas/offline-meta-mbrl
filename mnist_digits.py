@@ -34,7 +34,10 @@ class SequenceBlock(eqx.Module):
         skip = x
         x = jax.vmap(self.norm)(x)
         if convolve:
-            pred_fn = self.cell.convolve
+            # Heuristically use FFT for very long sequence lengthes
+            pred_fn = lambda x: self.cell.convolve(
+                x, True if x.shape[0] > 64 else False
+            )
         else:
             fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
             pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)
@@ -81,22 +84,21 @@ class Model(eqx.Module):
         else:
             return hidden_states, x
 
-    def sample(self, initial_state, inputs, *, key=None):
-        ssms = [layer.cell.ssm(inputs.shape[0]) for layer in self.layers]
+    def sample(self, horizon, initial_state, *, key=None):
+        ssms = [layer.cell.ssm(horizon) for layer in self.layers]
 
         def f(carry, x):
-            state, carry = carry
-            x = jnp.concatenate([state, x], -1)
+            carry, x = carry
             x = self.encoder(x)
             out_carry = []
             for layer_hidden, ssm, layer in zip(carry, ssms, self.layers):
                 layer_hidden, x = layer.step(layer_hidden, x, ssm)
                 out_carry.append(layer_hidden)
             x = self.decoder(x)
-            return jnp.argmax(x, axis=-1), out_carry
+            out = jnp.argmax(x, axis=-1, keepdims=True)
+            return (out_carry, out), out
 
-        init = initial_state, [layer.cell.init_state for layer in self.layers]
-        _, out = jax.lax.scan(f, init, inputs)
+        _, out = jax.lax.scan(f, initial_state, None, horizon)
         return out
 
 
@@ -127,7 +129,7 @@ def create_mnist_dataset(bsz=128):
         batch_size=bsz,
         shuffle=False,
     )
-    return trainloader, testloader, N_CLASSES, SEQ_LENGTH, IN_DIM
+    return trainloader, testloader, N_CLASSES, IN_DIM
 
 
 def sample_image_prefix(
@@ -135,55 +137,41 @@ def sample_image_prefix(
     dataloader,
     prefix=300,
     imshape=(28, 28),
-    n_batches=1,
+    batch_size=6,
     save=True,
 ):
     """Sample a grayscale image represented as intensities in [0, 255]"""
     import matplotlib.pyplot as plt
     import numpy as onp
 
-    start = np.array(next(iter(dataloader))[0].numpy())
-    start = np.zeros_like(start)
-    model(start, convolve=False)
-    BATCH = start.shape[0]
-    START = prefix
-    LENGTH = start.shape[1]
-    assert LENGTH == onp.prod(imshape)
+    example = np.array(next(iter(dataloader))[0].numpy())
+    batch = example[:batch_size].shape[0]
+    length = example.shape[1]
+    assert length == onp.prod(imshape)
     final, final2 = None, None
     it = iter(dataloader)
-    for j in range(n_batches):
-        im = next(it)[0].numpy()
-        image = im[0].numpy()
-        image = np.pad(image[:, :-1, :], [(0, 0), (1, 0), (0, 0)], constant_values=0)
-        cur = onp.array(image)
-        cur = np.array(cur[:, :])
-        # Cache the first `start` inputs.
-        out = model.sample()
-        # Visualization
-        out = out.reshape(BATCH, *imshape)
-        final = onp.zeros((BATCH, *imshape, 3))
-        final2 = onp.zeros((BATCH, *imshape, 3))
-        final[:, :, :, 0] = out
-        f = final.reshape(BATCH, LENGTH, 3)
-        i = image.reshape(BATCH, LENGTH)
-        f[:, :START, 1] = i[:, :START]
-        f[:, :START, 2] = i[:, :START]
-        f = final2.reshape(BATCH, LENGTH, 3)
-        f[:, :, 1] = i
-        f[:, :START, 0] = i[:, :START]
-        f[:, :START, 2] = i[:, :START]
-        if save:
-            for k in range(BATCH):
-                fig, (ax1, ax2) = plt.subplots(ncols=2)
-                ax1.set_title("Sampled")
-                ax1.imshow(final[k] / 256.0)
-                ax2.set_title("True")
-                ax1.axis("off")
-                ax2.axis("off")
-                ax2.imshow(final2[k] / 256.0)
-                fig.savefig("im%d.%d.png" % (j, k))
-                plt.close()
-                print(f"Sampled batch {j} image {k}")
+    image = next(it)[0].numpy()
+    image = np.pad(image[:, :-1], [(0, 0), (1, 0), (0, 0)], constant_values=0)
+    curr = image[:batch_size]
+    context = curr[:, :prefix]
+    # Cache the first `start` inputs.
+    hidden, _ = jax.vmap(model)(context)
+    out = jax.vmap(model.sample, (None, 0))(
+        curr.shape[1] - context.shape[1], (hidden, context[:, -1])
+    )
+    # Visualization
+    sampled = np.concatenate([context, out], axis=1)
+    if save:
+        for k in range(batch):
+            fig, (ax1, ax2) = plt.subplots(ncols=2)
+            ax1.set_title("Sampled")
+            ax1.imshow(sampled[k].reshape(imshape) / 256.0)
+            ax2.set_title("True")
+            ax1.axis("off")
+            ax2.axis("off")
+            ax2.imshow(curr[k].reshape(imshape) / 256.0)
+            fig.savefig("im.%d.png" % (k))
+            plt.close()
     return final, final2
 
 
@@ -194,7 +182,7 @@ def main(
     seed=777,
 ):
     data_key, loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 3)
-    trainloader, testloader, n_classes, seq_length, in_dim = create_mnist_dataset()
+    trainloader, testloader, n_classes, in_dim = create_mnist_dataset()
     iter_data = iter(trainloader)
 
     model = Model(
@@ -209,7 +197,7 @@ def main(
     @eqx.filter_value_and_grad
     def compute_loss(model, x, y):
         logits = jax.vmap(lambda x: model(x, True))(x)[1].astype(jnp.float32)
-        loss = -jax.vmap(optax.softmax_cross_entropy)(
+        loss = jax.vmap(jax.vmap(optax.softmax_cross_entropy))(
             logits, jnn.one_hot(y, n_classes)
         ).mean()
         return loss
@@ -227,7 +215,7 @@ def main(
             nodes.append(layer.cell.d)
         return nodes
 
-    # @eqx.filter_jit
+    @eqx.filter_jit
     def make_step(model, x, y, opt_state):
         loss, grads = compute_loss(model, x, y)
         grads = eqx.tree_at(cells, grads, replace_fn=lambda x: x * 1.0)
@@ -239,17 +227,21 @@ def main(
     opt_state = optim.init(model)
     for step, (x, y) in zip(range(steps), iter_data):
         x, y = [d.numpy() for d in (x, y)]
+        y = x[:, :-1, 0]
+        x = x[:, 1:]
         loss, model, opt_state = make_step(model, x, y, opt_state)
         loss = loss.item()
         print(f"step={step}, loss={loss}")
 
-    xs, ys = next(iter(testloader))
-    pred_ys = jax.vmap(lambda x: model(x, True))(xs)[1]
-    num_correct = jnp.sum((pred_ys > 0.5) == ys)
-    final_accuracy = (num_correct / xs.shape[0]).item()
+    xs, ys = [d.numpy() for d in next(iter(testloader))]
+    ys = xs[:, :-1, 0]
+    xs = xs[:, 1:]
+    logits = jax.vmap(lambda x: model(x, True))(xs)[1]
+    num_correct = jnp.sum((jnp.exp(logits).argmax(-1)) == ys)
+    final_accuracy = (num_correct / xs.size).item()
     print(f"final_accuracy={final_accuracy}")
 
-    img1, img2 = sample_image_prefix(model, testloader, n_batches=1)
+    img1, img2 = sample_image_prefix(model, testloader)
 
 
 if __name__ == "__main__":
