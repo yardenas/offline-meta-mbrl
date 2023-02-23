@@ -1,3 +1,4 @@
+from functools import partial
 from typing import List
 
 import equinox as eqx
@@ -11,6 +12,12 @@ import torchvision.transforms as transforms
 from torch.utils import data
 
 import s4
+
+
+@partial(jnp.vectorize, signature="(c),()->()")
+def cross_entropy_loss(logits, label):
+    one_hot_label = jnn.one_hot(label, num_classes=logits.shape[0])
+    return -np.sum(one_hot_label * logits)
 
 
 class SequenceBlock(eqx.Module):
@@ -73,36 +80,45 @@ class Model(eqx.Module):
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
     def __call__(self, x, convolve=False, *, key=None):
+        x /= 255.0
+        x = jnp.pad(x[:-1], [(1, 0), (0, 0)])
         x = jax.vmap(self.encoder)(x)
         hidden_states = []
         for layer in self.layers:
             hidden, x = layer(x, convolve=convolve)
             hidden_states.append(hidden)
         x = jax.vmap(self.decoder)(x)
+        x = jnn.log_softmax(x, axis=-1)
         if convolve:
             return None, x
         else:
             return hidden_states, x
 
-    def sample(self, horizon, initial_state, *, key=None):
+    def sample(self, horizon, initial_state, inputs=None, *, key=None):
         ssms = [layer.cell.ssm(horizon) for layer in self.layers]
 
         def f(carry, x):
-            carry, x = carry
+            i, carry, prev_x = carry
+            if x is None:
+                x = prev_x
+            else:
+                x = jnp.where(i >= horizon, prev_x, x)
+            x /= 255.0
             x = self.encoder(x)
             out_carry = []
             for layer_hidden, ssm, layer in zip(carry, ssms, self.layers):
                 layer_hidden, x = layer.step(layer_hidden, x, ssm)
                 out_carry.append(layer_hidden)
             x = self.decoder(x)
-            out = jnp.argmax(x, axis=-1, keepdims=True)
-            return (out_carry, out), out
+            x = jnn.log_softmax(x, axis=-1)
+            out = jnp.argmax(x, keepdims=True)
+            return (i + 1, out_carry, out), out
 
-        _, out = jax.lax.scan(f, initial_state, None, horizon)
+        _, out = jax.lax.scan(f, (0,) + initial_state, inputs)
         return out
 
 
-def create_mnist_dataset(bsz=128):
+def create_mnist_dataset(bsz=32):
     print("[*] Generating MNIST Sequence Modeling Dataset...")
     # Constants
     SEQ_LENGTH, N_CLASSES, IN_DIM = 784, 256, 1
@@ -148,31 +164,32 @@ def sample_image_prefix(
     batch = example[:batch_size].shape[0]
     length = example.shape[1]
     assert length == onp.prod(imshape)
-    final, final2 = None, None
     it = iter(dataloader)
     image = next(it)[0].numpy()
-    image = np.pad(image[:, :-1], [(0, 0), (1, 0), (0, 0)], constant_values=0)
-    curr = image[:batch_size]
-    context = curr[:, :prefix]
-    # Cache the first `start` inputs.
-    hidden, _ = jax.vmap(model)(context)
-    out = jax.vmap(model.sample, (None, 0))(
-        curr.shape[1] - context.shape[1], (hidden, context[:, -1])
+    input_image = np.pad(image[:, :-1], [(0, 0), (1, 0), (0, 0)], constant_values=0)
+    curr = input_image[:batch_size]
+    hidden = [np.tile(layer.cell.init_state, (6, 1, 1)) for layer in model.layers]
+    _, out1 = jax.vmap(model)(image[:batch_size])
+    out1 = out1.argmax(-1)
+    out = jax.vmap(model.sample, (None, 0, 0))(
+        prefix, (hidden, jnp.zeros_like(curr[:, 0])), curr
     )
     # Visualization
-    sampled = np.concatenate([context, out], axis=1)
+    # sampled = np.concatenate([context, out], axis=1)
     if save:
         for k in range(batch):
-            fig, (ax1, ax2) = plt.subplots(ncols=2)
+            fig, (ax1, ax2, ax3) = plt.subplots(ncols=3)
             ax1.set_title("Sampled")
-            ax1.imshow(sampled[k].reshape(imshape) / 256.0)
+            ax1.imshow(out[k].reshape(imshape) / 256.0)
             ax2.set_title("True")
+            ax3.set_title("Single step")
             ax1.axis("off")
             ax2.axis("off")
+            ax3.axis("off")
             ax2.imshow(curr[k].reshape(imshape) / 256.0)
+            ax3.imshow(out1[k].reshape(imshape) / 256.0)
             fig.savefig("im.%d.png" % (k))
             plt.close()
-    return final, final2
 
 
 def main(
@@ -182,7 +199,7 @@ def main(
     seed=777,
 ):
     data_key, loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 3)
-    trainloader, testloader, n_classes, in_dim = create_mnist_dataset()
+    trainloader, testloader, n_classes, in_dim = create_mnist_dataset(32)
     iter_data = iter(trainloader)
 
     model = Model(
@@ -197,9 +214,7 @@ def main(
     @eqx.filter_value_and_grad
     def compute_loss(model, x, y):
         logits = jax.vmap(lambda x: model(x, True))(x)[1].astype(jnp.float32)
-        loss = jax.vmap(jax.vmap(optax.softmax_cross_entropy))(
-            logits, jnn.one_hot(y, n_classes)
-        ).mean()
+        loss = jnp.mean(cross_entropy_loss(logits, y))
         return loss
 
     # Important for efficiency whenever you use JAX: wrap everything
@@ -227,21 +242,33 @@ def main(
     opt_state = optim.init(model)
     for step, (x, y) in zip(range(steps), iter_data):
         x, y = [d.numpy() for d in (x, y)]
-        y = x[:, :-1, 0]
-        x = x[:, 1:]
+        y = x[:, :, 0]
         loss, model, opt_state = make_step(model, x, y, opt_state)
         loss = loss.item()
         print(f"step={step}, loss={loss}")
 
     xs, ys = [d.numpy() for d in next(iter(testloader))]
-    ys = xs[:, :-1, 0]
-    xs = xs[:, 1:]
+    ys = xs[:, :, 0]
     logits = jax.vmap(lambda x: model(x, True))(xs)[1]
-    num_correct = jnp.sum((jnp.exp(logits).argmax(-1)) == ys)
-    final_accuracy = (num_correct / xs.size).item()
+    final_accuracy = jnp.mean((jnp.exp(logits).argmax(-1)) == ys)
     print(f"final_accuracy={final_accuracy}")
 
-    img1, img2 = sample_image_prefix(model, testloader)
+    # sampled = jnp.exp(logits).argmax(-1)
+    # import matplotlib.pyplot as plt
+
+    # imshape = (28, 28)
+    # for k in range(6):
+    #     fig, (ax1, ax2) = plt.subplots(ncols=2)
+    #     ax1.set_title("Sampled")
+    #     ax1.imshow(np.pad(sampled[k], (0, 1)).reshape(imshape) / 256.0)
+    #     ax2.set_title("True")
+    #     ax1.axis("off")
+    #     ax2.axis("off")
+    #     ax2.imshow(np.pad(xs[k], (0, 1)).reshape(imshape) / 256.0)
+    #     fig.savefig("im.%d.png" % (k))
+    #     plt.close()
+
+    sample_image_prefix(model, testloader)
 
 
 if __name__ == "__main__":

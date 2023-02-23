@@ -29,7 +29,10 @@ class SequenceBlock(eqx.Module):
         skip = x
         x = jax.vmap(self.norm)(x)
         if convolve:
-            pred_fn = self.cell.convolve
+            # Heuristically use FFT for very long sequence lengthes
+            pred_fn = lambda x: self.cell.convolve(
+                x, True if x.shape[0] > 64 else False
+            )
         else:
             fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
             pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)[1]
