@@ -15,6 +15,7 @@ class SequenceBlock(eqx.Module):
     out: eqx.nn.Linear
     out2: eqx.nn.Linear
     norm: eqx.nn.LayerNorm
+    hippo_n: int
 
     def __init__(self, hidden_size, hippo_n, *, key):
         cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
@@ -24,21 +25,29 @@ class SequenceBlock(eqx.Module):
         self.norm = eqx.nn.LayerNorm(
             hidden_size,
         )
+        self.hippo_n = hippo_n
 
-    def __call__(self, x, convolve=False, *, key=None):
+    def __call__(self, x, convolve=False, *, key=None, ssm=None, hidden=None):
         skip = x
         x = jax.vmap(self.norm)(x)
         if convolve:
             # Heuristically use FFT for very long sequence lengthes
             pred_fn = lambda x: self.cell.convolve(
-                x, True if x.shape[0] > 64 else False
+                x, True if x.shape[0] > 32 else False
             )
         else:
-            fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
-            pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)[1]
-        x = jnn.gelu(pred_fn(x))
+            ssm = ssm if ssm is not None else self.cell.ssm(skip.shape[0])
+            hidden = hidden if hidden is not None else self.cell.init_state
+            fn = lambda carry, x: self.cell(carry, x, ssm)
+            pred_fn = lambda x: jax.lax.scan(fn, hidden, x)
+        if convolve:
+            x = pred_fn(x)
+            hidden = None
+        else:
+            hidden, x = pred_fn(x)
+        x = jnn.gelu(x)
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
-        return skip + x
+        return hidden, skip + x
 
     def step(self, hidden, x, ssm):
         skip = x
@@ -62,29 +71,38 @@ class Model(eqx.Module):
         self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
-    def __call__(self, x, convolve=False, *, key=None):
+    def __call__(self, x, convolve=False, *, key=None, ssm=None, hidden=None):
+        if hidden is None or ssm is None:
+            hidden = [None] * len(self.layers)
+            ssm = [None] * len(self.layers)
         x = jax.vmap(self.encoder)(x)
-        for layer in self.layers:
-            x = layer(x, convolve=convolve)
+        hidden_states = []
+        for layer_ssm, layer_hidden, layer in zip(ssm, hidden, self.layers):
+            hidden, x = layer(x, convolve=convolve, ssm=layer_ssm, hidden=layer_hidden)
+            hidden_states.append(hidden)
         x = jax.vmap(self.decoder)(x)
-        return x
+        if convolve:
+            return None, x
+        else:
+            return hidden_states, x
 
-    def sample(self, initial_state, action_sequence, *, key=None):
-        ssms = [layer.cell.ssm(action_sequence.shape[0]) for layer in self.layers]
+    def sample(self, horizon, initial_state, inputs=None, *, key=None):
+        sequence_length = horizon if inputs is None else inputs.shape[0]
+        ssms = [layer.cell.ssm(sequence_length) for layer in self.layers]
 
         def f(carry, x):
-            state, carry = carry
-            x = jnp.concatenate([state, x], -1)
-            x = self.encoder(x)
-            out_carry = []
-            for layer_hidden, ssm, layer in zip(carry, ssms, self.layers):
-                layer_hidden, x = layer.step(layer_hidden, x, ssm)
-                out_carry.append(layer_hidden)
-            x = self.decoder(x)
-            return (x[:-1], out_carry), x
+            i, carry, prev_x = carry
+            if x is None:
+                x = prev_x
+            else:
+                prev_x = jnp.concatenate([prev_x[:3], x[-1:]], axis=-1)
+                x = jnp.where(i >= horizon, prev_x, x)
+            x = x[None]
+            out_carry, out = self(x, convolve=False, ssm=ssms, hidden=carry)
+            out = out[0]
+            return (i + 1, out_carry, out), out
 
-        init = initial_state, [layer.cell.init_state for layer in self.layers]
-        _, out = jax.lax.scan(f, init, action_sequence)
+        _, out = jax.lax.scan(f, (0,) + initial_state, inputs)
         return out
 
 
@@ -137,7 +155,7 @@ def main(
     learning_rate=1e-3,
     steps=200,
     hidden_size=128,
-    sequence_length=16,
+    sequence_length=64,
     seed=777,
 ):
     loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 2)
@@ -155,7 +173,7 @@ def main(
 
     @eqx.filter_value_and_grad
     def compute_loss(model, x, y):
-        y_hat = jax.vmap(lambda x: model(x, True))(x)
+        y_hat = jax.vmap(lambda x: model(x, True))(x)[1]
         # Trains with respect to L2 loss
         error = y_hat - y
         return 0.5 * (error**2).mean()
@@ -188,9 +206,38 @@ def main(
         loss = loss.item()
         print(f"step={step}, loss={loss}")
     x, y = next(iter_data)
-    initial_state = x[:, 0, :-1]
-    action_sequence = x[..., -1:]
-    jax.vmap(model.sample)(initial_state, action_sequence)
+    hidden = [
+        np.tile(layer.cell.init_state, (batch_size, 1, 1)) for layer in model.layers
+    ]
+    y_hat = jax.vmap(model.sample, (None, 0, 0))(1, (hidden, x[:, 0]), x)
+    print(f"MSE: {np.mean((y - y_hat)**2)}")
+    plot(y, y_hat)
+
+
+def plot(y, y_hat):
+    import matplotlib.pyplot as plt
+
+    t = np.arange(y.shape[1])
+
+    plt.figure(figsize=(10, 5), dpi=600)
+    for i in range(4):
+        plt.subplot(2, 3, i + 1)
+        plt.plot(t, y[i, :, 0], "b.", label="observed")
+        plt.plot(
+            t,
+            y_hat[i, :, 0],
+            "r",
+            label="prediction",
+            linewidth=1.0,
+        )
+        ax = plt.gca()
+        ax.xaxis.set_ticks_position("bottom")
+        ax.yaxis.set_ticks_position("left")
+        ax.spines["left"].set_position(("data", 0))
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
