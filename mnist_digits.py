@@ -37,7 +37,7 @@ class SequenceBlock(eqx.Module):
         )
         self.hippo_n = hippo_n
 
-    def __call__(self, x, convolve=False, *, key=None):
+    def __call__(self, x, convolve=False, *, key=None, ssm=None, hidden=None):
         skip = x
         x = jax.vmap(self.norm)(x)
         if convolve:
@@ -46,8 +46,10 @@ class SequenceBlock(eqx.Module):
                 x, True if x.shape[0] > 64 else False
             )
         else:
-            fn = lambda carry, x: self.cell(carry, x, self.cell.ssm(skip.shape[0]))
-            pred_fn = lambda x: jax.lax.scan(fn, self.cell.init_state, x)
+            ssm = ssm if ssm is not None else self.cell.ssm(skip.shape[0])
+            hidden = hidden if hidden is not None else self.cell.init_state
+            fn = lambda carry, x: self.cell(carry, x, ssm)
+            pred_fn = lambda x: jax.lax.scan(fn, hidden, x)
         if convolve:
             x = pred_fn(x)
             hidden = None
@@ -79,13 +81,15 @@ class Model(eqx.Module):
         self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
         self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
-    def __call__(self, x, convolve=False, *, key=None):
+    def __call__(self, x, convolve=False, *, key=None, ssm=None, hidden=None):
         x /= 255.0
-        x = jnp.pad(x[:-1], [(1, 0), (0, 0)])
+        if hidden is None or ssm is None:
+            hidden = [None] * len(self.layers)
+            ssm = [None] * len(self.layers)
         x = jax.vmap(self.encoder)(x)
         hidden_states = []
-        for layer in self.layers:
-            hidden, x = layer(x, convolve=convolve)
+        for layer_ssm, layer_hidden, layer in zip(ssm, hidden, self.layers):
+            hidden, x = layer(x, convolve=convolve, ssm=layer_ssm, hidden=layer_hidden)
             hidden_states.append(hidden)
         x = jax.vmap(self.decoder)(x)
         x = jnn.log_softmax(x, axis=-1)
@@ -95,7 +99,8 @@ class Model(eqx.Module):
             return hidden_states, x
 
     def sample(self, horizon, initial_state, inputs=None, *, key=None):
-        ssms = [layer.cell.ssm(horizon) for layer in self.layers]
+        sequence_length = horizon if inputs is None else inputs.shape[0]
+        ssms = [layer.cell.ssm(sequence_length) for layer in self.layers]
 
         def f(carry, x):
             i, carry, prev_x = carry
@@ -103,15 +108,9 @@ class Model(eqx.Module):
                 x = prev_x
             else:
                 x = jnp.where(i >= horizon, prev_x, x)
-            x /= 255.0
-            x = self.encoder(x)
-            out_carry = []
-            for layer_hidden, ssm, layer in zip(carry, ssms, self.layers):
-                layer_hidden, x = layer.step(layer_hidden, x, ssm)
-                out_carry.append(layer_hidden)
-            x = self.decoder(x)
-            x = jnn.log_softmax(x, axis=-1)
-            out = jnp.argmax(x, keepdims=True)
+            x = x[None, :]
+            out_carry, out = self(x, convolve=False, ssm=ssms, hidden=carry)
+            out = out.argmax(-1).astype(jnp.float32)
             return (i + 1, out_carry, out), out
 
         _, out = jax.lax.scan(f, (0,) + initial_state, inputs)
@@ -165,17 +164,18 @@ def sample_image_prefix(
     length = example.shape[1]
     assert length == onp.prod(imshape)
     it = iter(dataloader)
-    image = next(it)[0].numpy()
+    image = next(it)[0].numpy().astype(np.float32)
     input_image = np.pad(image[:, :-1], [(0, 0), (1, 0), (0, 0)], constant_values=0)
     curr = input_image[:batch_size]
-    hidden = [np.tile(layer.cell.init_state, (6, 1, 1)) for layer in model.layers]
     _, out1 = jax.vmap(model)(image[:batch_size])
     out1 = out1.argmax(-1)
+    hidden = [
+        np.tile(layer.cell.init_state, (batch_size, 1, 1)) for layer in model.layers
+    ]
     out = jax.vmap(model.sample, (None, 0, 0))(
         prefix, (hidden, jnp.zeros_like(curr[:, 0])), curr
     )
     # Visualization
-    # sampled = np.concatenate([context, out], axis=1)
     if save:
         for k in range(batch):
             fig, (ax1, ax2, ax3) = plt.subplots(ncols=3)
@@ -194,8 +194,8 @@ def sample_image_prefix(
 
 def main(
     learning_rate=1e-3,
-    steps=200,
-    hidden_size=128,
+    steps=4000,
+    hidden_size=256,
     seed=777,
 ):
     data_key, loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 3)
@@ -203,7 +203,7 @@ def main(
     iter_data = iter(trainloader)
 
     model = Model(
-        n_layers=1,
+        n_layers=4,
         in_size=in_dim,
         out_size=n_classes,
         hidden_size=hidden_size,
@@ -233,7 +233,7 @@ def main(
     @eqx.filter_jit
     def make_step(model, x, y, opt_state):
         loss, grads = compute_loss(model, x, y)
-        grads = eqx.tree_at(cells, grads, replace_fn=lambda x: x * 1.0)
+        grads = eqx.tree_at(cells, grads, replace_fn=lambda x: x * 10.0)
         updates, opt_state = optim.update(grads, opt_state)
         model = eqx.apply_updates(model, updates)
         return loss, model, opt_state
@@ -242,32 +242,18 @@ def main(
     opt_state = optim.init(model)
     for step, (x, y) in zip(range(steps), iter_data):
         x, y = [d.numpy() for d in (x, y)]
-        y = x[:, :, 0]
+        y = x[:, 1:, 0]
+        x = x[:, :-1]
         loss, model, opt_state = make_step(model, x, y, opt_state)
         loss = loss.item()
         print(f"step={step}, loss={loss}")
 
     xs, ys = [d.numpy() for d in next(iter(testloader))]
-    ys = xs[:, :, 0]
+    ys = xs[:, 1:, 0]
+    xs = xs[:, :-1]
     logits = jax.vmap(lambda x: model(x, True))(xs)[1]
-    final_accuracy = jnp.mean((jnp.exp(logits).argmax(-1)) == ys)
+    final_accuracy = jnp.mean((logits.argmax(-1)) == ys)
     print(f"final_accuracy={final_accuracy}")
-
-    # sampled = jnp.exp(logits).argmax(-1)
-    # import matplotlib.pyplot as plt
-
-    # imshape = (28, 28)
-    # for k in range(6):
-    #     fig, (ax1, ax2) = plt.subplots(ncols=2)
-    #     ax1.set_title("Sampled")
-    #     ax1.imshow(np.pad(sampled[k], (0, 1)).reshape(imshape) / 256.0)
-    #     ax2.set_title("True")
-    #     ax1.axis("off")
-    #     ax2.axis("off")
-    #     ax2.imshow(np.pad(xs[k], (0, 1)).reshape(imshape) / 256.0)
-    #     fig.savefig("im.%d.png" % (k))
-    #     plt.close()
-
     sample_image_prefix(model, testloader)
 
 
