@@ -150,12 +150,12 @@ def get_data(data_path, sequence_length):
 
 
 def main(
-    data_path="data-1-25-2023-02-15-15:46.npz",
+    data_path="data-1-25-2023-02-24-15:54.npz",
     batch_size=32,
     learning_rate=1e-3,
-    steps=200,
+    steps=500,
     hidden_size=128,
-    sequence_length=64,
+    sequence_length=84,
     seed=777,
 ):
     loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 2)
@@ -222,10 +222,10 @@ def plot(y, y_hat):
     plt.figure(figsize=(10, 5), dpi=600)
     for i in range(4):
         plt.subplot(2, 3, i + 1)
-        plt.plot(t, y[i, :, 0], "b.", label="observed")
+        plt.plot(t, y[i, :, 3], "b.", label="observed")
         plt.plot(
             t,
-            y_hat[i, :, 0],
+            y_hat[i, :, 3],
             "r",
             label="prediction",
             linewidth=1.0,

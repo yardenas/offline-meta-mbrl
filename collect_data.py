@@ -43,7 +43,6 @@ def trial(num_episodes, rod_length, append_fn):
     """Collects episodes for a given rod length variable."""
     env = gym.make(
         "Pendulum-v1",
-        g=rod_length,
         render_mode="human",
         max_episode_steps=EPISODE_STEPS,
     )
