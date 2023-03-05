@@ -105,6 +105,10 @@ class Model(eqx.Module):
         _, out = jax.lax.scan(f, (0,) + initial_state, inputs)
         return out
 
+    @property
+    def init_state(self):
+        return [layer.cell.init_state for layer in self.layers]
+
 
 def dataloader(arrays, batch_size, *, key):
     dataset_size = arrays[0].shape[0]
@@ -206,9 +210,7 @@ def main(
         loss = loss.item()
         print(f"step={step}, loss={loss}")
     x, y = next(iter_data)
-    hidden = [
-        np.tile(layer.cell.init_state, (batch_size, 1, 1)) for layer in model.layers
-    ]
+    hidden = [np.tile(x, (batch_size, 1, 1)) for x in model.init_state]
     y_hat = jax.vmap(model.sample, (None, 0, 0))(1, (hidden, x[:, 0]), x)
     print(f"MSE: {np.mean((y - y_hat)**2)}")
     plot(y, y_hat)
@@ -222,10 +224,10 @@ def plot(y, y_hat):
     plt.figure(figsize=(10, 5), dpi=600)
     for i in range(4):
         plt.subplot(2, 3, i + 1)
-        plt.plot(t, y[i, :, 3], "b.", label="observed")
+        plt.plot(t, y[i, :, 2], "b.", label="observed")
         plt.plot(
             t,
-            y_hat[i, :, 3],
+            y_hat[i, :, 2],
             "r",
             label="prediction",
             linewidth=1.0,

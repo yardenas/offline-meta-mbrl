@@ -5,7 +5,9 @@ import functools
 import gymnasium as gym
 import numpy as np
 import pygame
+from gymnasium.envs.classic_control import pendulum
 from gymnasium.wrappers.rescale_action import RescaleAction
+from gymnasium.wrappers.time_limit import TimeLimit
 
 EPISODE_STEPS = 100
 
@@ -19,6 +21,37 @@ def controller():
         action -= (keys[pygame.K_LEFT]) * 0.25
         action = np.clip(action, -1.0, 1.0)
         yield action
+
+
+class RotatedPendulum(pendulum.PendulumEnv):
+    def __init__(self, render_mode=None, g=10.0, angle=0.0):
+        super().__init__(render_mode, g)
+        self.angle = angle
+
+    def step(self, u):
+        th, thdot = self.state  # th := theta
+
+        g = self.g
+        m = self.m
+        l = self.l  # noqa E741
+        dt = self.dt
+
+        u = np.clip(u, -self.max_torque, self.max_torque)[0]
+        self.last_u = u  # for rendering
+        costs = pendulum.angle_normalize(th) ** 2 + 0.1 * thdot**2 + 0.001 * (u**2)
+
+        newthdot = (
+            thdot
+            + (3 * g / (2 * l) * np.sin(th + self.angle) + 3.0 / (m * l**2) * u) * dt
+        )
+        newthdot = np.clip(newthdot, -self.max_speed, self.max_speed)
+        newth = th + newthdot * dt
+
+        self.state = np.array([newth, newthdot])
+
+        if self.render_mode == "human":
+            self.render()
+        return self._get_obs(), -costs, False, False, {}
 
 
 class Buffer:
@@ -39,15 +72,11 @@ class Buffer:
         self.rewards[trial, episode, step] = reward
 
 
-def trial(num_episodes, rod_length, append_fn):
+def trial(num_episodes, gravity_angle, append_fn):
     """Collects episodes for a given rod length variable."""
-    env = gym.make(
-        "Pendulum-v1",
-        render_mode="human",
-        max_episode_steps=EPISODE_STEPS,
-    )
-    env = RescaleAction(env, min_action=-1.0, max_action=1.0)
-    env.unwrapped.l = rod_length  # type: ignore  # noqa: E741
+    env = RotatedPendulum(angle=gravity_angle)
+    env = RescaleAction(env, min_action=-1.0, max_action=1.0)  # type: ignore
+    env = TimeLimit(env, max_episode_steps=EPISODE_STEPS)  # type: ignore
     episode_count = 0
     step = 0
     obs, _ = env.reset()
@@ -57,7 +86,7 @@ def trial(num_episodes, rod_length, append_fn):
         next_obs, reward, _, truncated, _ = env.step(action)
         append_fn(episode_count, step, obs, action, reward)
         step += 1
-        obs = next_obs.copy()
+        obs = next_obs.copy()  # type: ignore
         if truncated:
             episode_count += 1
             step = 0
