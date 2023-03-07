@@ -151,7 +151,7 @@ def main(
     learning_rate=1e-3,
     steps=500,
     hidden_size=128,
-    sequence_length=84,
+    sequence_length=192,
     seed=777,
 ):
     loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 2)
@@ -203,19 +203,20 @@ def main(
         print(f"step={step}, loss={loss}")
     x, y = next(iter_data)
     hidden = [np.tile(x, (batch_size, 1, 1)) for x in model.init_state]
-    y_hat = jax.vmap(model.sample, (None, 0, 0))(15, (hidden, x[:, 0]), x)
+    context = 15
+    y_hat = jax.vmap(model.sample, (None, 0, 0))(context, (hidden, x[:, 0]), x)
     print(f"MSE: {np.mean((y - y_hat)**2)}")
-    plot(y, y_hat)
+    plot(y, y_hat, context)
 
 
-def plot(y, y_hat):
+def plot(y, y_hat, context):
     import matplotlib.pyplot as plt
 
     t = np.arange(y.shape[1])
 
     plt.figure(figsize=(10, 5), dpi=600)
-    for i in range(4):
-        plt.subplot(2, 3, i + 1)
+    for i in range(12):
+        plt.subplot(3, 4, i + 1)
         plt.plot(t, y[i, :, 2], "b.", label="observed")
         plt.plot(
             t,
@@ -230,6 +231,7 @@ def plot(y, y_hat):
         ax.spines["left"].set_position(("data", 0))
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        ax.axvline(context, color="k", linestyle="--", linewidth=1.0)
     plt.tight_layout()
     plt.show()
 
