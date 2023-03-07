@@ -146,7 +146,7 @@ def get_data(data_path, sequence_length):
 
 
 def main(
-    data_path="data-25-1-2023-03-06-08:31.npz",
+    data_path="data-25-1-2023-03-07-16:30.npz",
     batch_size=32,
     learning_rate=1e-3,
     steps=500,
@@ -203,7 +203,7 @@ def main(
         print(f"step={step}, loss={loss}")
     x, y = next(iter_data)
     hidden = [np.tile(x, (batch_size, 1, 1)) for x in model.init_state]
-    y_hat = jax.vmap(model.sample, (None, 0, 0))(5, (hidden, x[:, 0]), x)
+    y_hat = jax.vmap(model.sample, (None, 0, 0))(15, (hidden, x[:, 0]), x)
     print(f"MSE: {np.mean((y - y_hat)**2)}")
     plot(y, y_hat)
 

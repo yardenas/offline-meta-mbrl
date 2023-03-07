@@ -1,32 +1,59 @@
+import argparse
 from typing import List
 
 import equinox as eqx
 import jax
+import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
 import optax
 
 
+class SequenceBlock(eqx.Module):
+    cell: eqx.nn.Linear
+    out: eqx.nn.Linear
+    out2: eqx.nn.Linear
+    norm: eqx.nn.LayerNorm
+    hippo_n: int
+
+    def __init__(self, hidden_size, hippo_n, *, key):
+        cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
+        self.cell = eqx.nn.Linear(hidden_size, hippo_n, key=cell_key)
+        self.out = eqx.nn.Linear(hippo_n, hidden_size, key=encoder_key)
+        self.out2 = eqx.nn.Linear(hippo_n, hidden_size, key=decoder_key)
+        self.norm = eqx.nn.LayerNorm(
+            hidden_size,
+        )
+        self.hippo_n = hippo_n
+
+    def __call__(self, x):
+        skip = x
+        x = jax.vmap(self.norm)(x)
+        x = jax.vmap(self.cell)(x)
+        x = jnn.gelu(x)
+        x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
+        return skip + x
+
+
 class Model(eqx.Module):
-    layers: List[eqx.nn.Linear]
+    layers: List[SequenceBlock]
     encoder: eqx.nn.Linear
     decoder: eqx.nn.Linear
 
-    def __init__(self, n_layers, in_size, out_size, hidden_size, *, key):
+    def __init__(self, n_layers, in_size, out_size, hippo_n, hidden_size, *, key):
+        keys = jax.random.split(key, n_layers + 2)
         self.layers = [
-            eqx.nn.Linear(hidden_size, hidden_size, key=key) for _ in range(n_layers)
+            SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]
         ]
-        self.encoder = eqx.nn.Linear(in_size, hidden_size, key=key)
-        self.decoder = eqx.nn.Linear(hidden_size, out_size, key=key)
+        self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
+        self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
-    def __call__(self, x, key=None):
-        skip = x
+    def __call__(self, x, *, key=None):
         x = jax.vmap(self.encoder)(x)
         for layer in self.layers:
-            x = jax.vmap(layer)(x)
-            x = jax.nn.relu(x)
+            x = layer(x)
         x = jax.vmap(self.decoder)(x)
-        return skip + x
+        return x
 
     def sample(self, horizon, initial_state, inputs=None, *, key=None):
         def f(carry, x):
@@ -36,7 +63,9 @@ class Model(eqx.Module):
             else:
                 prev_x = jnp.concatenate([prev_x[:3], x[-1:]], axis=-1)
                 x = jnp.where(i >= horizon, prev_x, x)
-            out = self(x[None]).squeeze(0)
+            x = x[None]
+            out = self(x)
+            out = out[0]
             return (i + 1, out), out
 
         _, out = jax.lax.scan(f, (0, initial_state), inputs)
@@ -105,6 +134,7 @@ def main(
         out_size=4,
         hidden_size=hidden_size,
         key=model_key,
+        hippo_n=64,
     )
 
     @eqx.filter_value_and_grad
@@ -114,6 +144,8 @@ def main(
         error = y_hat - y
         return 0.5 * (error**2).mean()
 
+    # Important for efficiency whenever you use JAX: wrap everything
+    # into a single JIT region.
     @eqx.filter_jit
     def make_step(model, x, y, opt_state):
         loss, grads = compute_loss(model, x, y)
@@ -160,4 +192,8 @@ def plot(y, y_hat):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    # parser.add_argument("--data", type=str, required=True)
+    # parser.add_argument("--seed", type=int, default=123)
+    # args = parser.parse_args()
     main()
