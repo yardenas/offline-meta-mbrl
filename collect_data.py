@@ -9,7 +9,7 @@ from gymnasium.envs.classic_control import pendulum
 from gymnasium.wrappers.rescale_action import RescaleAction
 from gymnasium.wrappers.time_limit import TimeLimit
 
-EPISODE_STEPS = 100
+EPISODE_STEPS = 200
 
 
 def controller():
@@ -24,7 +24,7 @@ def controller():
 
 
 class RotatedPendulum(pendulum.PendulumEnv):
-    def __init__(self, render_mode=None, g=10.0, angle=0.0):
+    def __init__(self, render_mode="human", g=10.0, angle=0.0):
         super().__init__(render_mode, g)
         self.angle = angle
 
@@ -38,7 +38,11 @@ class RotatedPendulum(pendulum.PendulumEnv):
 
         u = np.clip(u, -self.max_torque, self.max_torque)[0]
         self.last_u = u  # for rendering
-        costs = pendulum.angle_normalize(th) ** 2 + 0.1 * thdot**2 + 0.001 * (u**2)
+        costs = (
+            pendulum.angle_normalize(th + self.angle) ** 2
+            + 0.1 * thdot**2
+            + 0.001 * (u**2)
+        )
 
         newthdot = (
             thdot
@@ -86,7 +90,7 @@ def trial(num_episodes, gravity_angle, append_fn):
         next_obs, reward, _, truncated, _ = env.step(action)
         append_fn(episode_count, step, obs, action, reward)
         step += 1
-        obs = next_obs.copy()  # type: ignore
+        obs = next_obs
         if truncated:
             episode_count += 1
             step = 0
@@ -107,7 +111,7 @@ def main():
         dummy.action_space.shape,
     )
     rng = np.random.default_rng(args.seed)
-    for trial_id, gravity in enumerate(rng.uniform(0.1, 2, args.num_trials)):
+    for trial_id, gravity in enumerate(rng.uniform(-np.pi, np.pi, args.num_trials)):
         append = functools.partial(data.append, trial_id)
         trial(args.num_episodes, gravity, append)
     now_str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")

@@ -1,13 +1,12 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 
 def make_HiPPO(n):
-    p = np.sqrt(1 + 2 * np.arange(n))
-    a = p[:, None] * p[None, 0:]
-    a = np.tril(a) - np.diag(np.arange(n))
+    p = jnp.sqrt(1 + 2 * jnp.arange(n))
+    a = p[:, jnp.newaxis] * p[jnp.newaxis, :]
+    a = jnp.tril(a) - jnp.diag(jnp.arange(n))
     return -a
 
 
@@ -16,10 +15,10 @@ def make_NPLR_HiPPO(n):
     nhippo = make_HiPPO(n)
 
     # Add in a rank 1 term. Makes it Normal.
-    p = np.sqrt(np.arange(n) + 0.5)
+    p = jnp.sqrt(jnp.arange(n) + 0.5)
 
     # HiPPO also specifies the B matrix
-    b = np.sqrt(2 * np.arange(n) + 1.0)
+    b = jnp.sqrt(2 * jnp.arange(n) + 1.0)
     return nhippo, p, b
 
 
@@ -27,11 +26,11 @@ def make_DPLR_HiPPO(n):
     """Diagonalize NPLR representation"""
     a, p, b = make_NPLR_HiPPO(n)
 
-    s = a + p[:, None] * p[None, :]
+    s = a + p[:, jnp.newaxis] * p[jnp.newaxis, :]
 
     # Check skew symmetry
-    S_diag = np.diagonal(s)
-    lambda_real = np.mean(S_diag) * np.ones_like(S_diag)
+    s_diag = jnp.diagonal(s)
+    lambda_real = jnp.mean(s_diag) * jnp.ones_like(s_diag)
 
     # Diagonalize S to V \lambda V^*
     lambda_imag, v = jnp.linalg.eigh(s * -1j)
@@ -47,9 +46,9 @@ def hippo_initializer(n):
 
 
 def log_step_initializer(key, shape, dt_min=0.001, dt_max=0.1):
-    return jax.random.uniform(key, shape) * (np.log(dt_max) - np.log(dt_min)) + np.log(
-        dt_min
-    )
+    return jax.random.uniform(key, shape) * (
+        jnp.log(dt_max) - jnp.log(dt_min)
+    ) + jnp.log(dt_min)
 
 
 def discrete_DPLR(_lambda, p, q, b, c, step, sequence_length):
@@ -88,7 +87,7 @@ def cauchy(v, omega, lambd):
 def kernel_DPLR(_lambda, p, q, b, c, step, sequence_length):
     # Evaluate at roots of unity
     # Generating function is (-)z-transform, so we evaluate at (-)root
-    omega_l = np.exp((-2j * np.pi) * (np.arange(sequence_length) / sequence_length))
+    omega_l = jnp.exp((-2j * jnp.pi) * (jnp.arange(sequence_length) / sequence_length))
     aterm = (c.conj(), q.conj())
     bterm = (b, p)
 
@@ -143,8 +142,7 @@ class S4Cell(eqx.Module):
         self.lambda_imag = _lambda_imag
         self.p = p
         self.b = b
-        c = jax.random.normal(key, (input_size, hippo_n, 2)) * (0.5**0.5)
-        self.c = c[..., 0] + 1j * c[..., 1]
+        self.c = jax.random.normal(key, (input_size, hippo_n, 2)) * (0.5**0.5)
         self.d = jnp.ones((input_size, 1))
         key, _ = jax.random.split(key)
         self.step = log_step_initializer(
@@ -169,7 +167,7 @@ class S4Cell(eqx.Module):
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
             self.b,
-            self.c,
+            self.c[..., 0] + 1j * self.c[..., 1],
             self.d,
             jnp.exp(self.step),
             u,
@@ -182,7 +180,7 @@ class S4Cell(eqx.Module):
             self.p,
             self.p,
             self.b,
-            self.c,
+            self.c[..., 0] + 1j * self.c[..., 1],
             jnp.exp(self.step),
             sequence_length,
         )

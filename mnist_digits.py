@@ -59,14 +59,6 @@ class SequenceBlock(eqx.Module):
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
         return hidden, skip + x
 
-    def step(self, hidden, x, ssm):
-        skip = x
-        x = self.norm(x)
-        hidden, x = self.cell(hidden, x, ssm)
-        x = jnn.gelu(x)
-        x = self.out(x) * jnn.sigmoid(self.out2(x))
-        return hidden, skip + x
-
 
 class Model(eqx.Module):
     layers: List[SequenceBlock]

@@ -49,14 +49,6 @@ class SequenceBlock(eqx.Module):
         x = jax.vmap(self.out)(x) * jnn.sigmoid(jax.vmap(self.out2)(x))
         return hidden, skip + x
 
-    def step(self, hidden, x, ssm):
-        skip = x
-        x = self.norm(x)
-        hidden, x = self.cell(hidden, x, ssm)
-        x = jnn.gelu(x)
-        x = self.out(x) * jnn.sigmoid(self.out2(x))
-        return hidden, skip + x
-
 
 class Model(eqx.Module):
     layers: List[SequenceBlock]
@@ -131,7 +123,7 @@ def dataloader(arrays, batch_size, *, key):
 
 def get_data(data_path, sequence_length):
     obs, action, reward = np.load(data_path).values()
-    obs, action, reward = [x.squeeze(0) for x in (obs, action, reward)]
+    obs, action, reward = [x.squeeze(1) for x in (obs, action, reward)]
 
     def normalize(x):
         mean = x.mean(axis=(0))
@@ -154,7 +146,7 @@ def get_data(data_path, sequence_length):
 
 
 def main(
-    data_path="data-1-25-2023-02-24-15:54.npz",
+    data_path="data-25-1-2023-03-06-08:31.npz",
     batch_size=32,
     learning_rate=1e-3,
     steps=500,
@@ -211,7 +203,7 @@ def main(
         print(f"step={step}, loss={loss}")
     x, y = next(iter_data)
     hidden = [np.tile(x, (batch_size, 1, 1)) for x in model.init_state]
-    y_hat = jax.vmap(model.sample, (None, 0, 0))(1, (hidden, x[:, 0]), x)
+    y_hat = jax.vmap(model.sample, (None, 0, 0))(5, (hidden, x[:, 0]), x)
     print(f"MSE: {np.mean((y - y_hat)**2)}")
     plot(y, y_hat)
 
