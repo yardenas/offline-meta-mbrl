@@ -186,12 +186,12 @@ def sample_image_prefix(
 
 def main(
     learning_rate=1e-3,
-    steps=4000,
-    hidden_size=256,
+    steps=5000,
+    hidden_size=128,
     seed=777,
 ):
     data_key, loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 3)
-    trainloader, testloader, n_classes, in_dim = create_mnist_dataset(32)
+    trainloader, testloader, n_classes, in_dim = create_mnist_dataset(128)
     iter_data = iter(trainloader)
 
     model = Model(
