@@ -36,7 +36,7 @@ class Model(eqx.Module):
             else:
                 prev_x = jnp.concatenate([prev_x[:3], x[-1:]], axis=-1)
                 x = jnp.where(i >= horizon, prev_x, x)
-            out = self(x[None]).squeeze(0)
+            out = self(x[None]).squeeze(0)  # pyright: ignore
             return (i + 1, out), out
 
         _, out = jax.lax.scan(f, (0, initial_state), inputs)
@@ -64,7 +64,7 @@ def dataloader(arrays, batch_size, *, key):
 
 def get_data(data_path, sequence_length):
     obs, action, reward = np.load(data_path).values()
-    obs, action, reward = [x.squeeze(1) for x in (obs, action, reward)]
+    obs, action, reward = [x.squeeze(0) for x in (obs, action, reward)]
 
     def normalize(x):
         mean = x.mean(axis=(0))
@@ -87,7 +87,7 @@ def get_data(data_path, sequence_length):
 
 
 def main(
-    data_path="data-25-1-2023-03-07-16:30.npz",
+    data_path="data-1-25-2023-03-07-13:59.npz",
     batch_size=32,
     learning_rate=1e-3,
     steps=500,

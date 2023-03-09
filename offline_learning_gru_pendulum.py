@@ -77,7 +77,7 @@ class Model(eqx.Module):
             else:
                 prev_x = jnp.concatenate([prev_x[:3], x[-1:]], axis=-1)
                 x = jnp.where(i >= horizon, prev_x, x)
-            x = x[None]
+            x = x[None]  # pyright: ignore
             out_carry, out = self(x, convolve=False, hidden=carry)
             out = out[0]
             return (i + 1, out_carry, out), out

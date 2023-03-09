@@ -11,14 +11,6 @@ class ParamsMeanField(NamedTuple):
     stddev: Any
 
     def log_prob(self, params):
-        """Measures the log probability of (batches of) parameter samples.
-
-        Args:
-            params (hk.Params): Parameters of a model.
-
-        Returns:
-            Array: Log probability of each params sample.
-        """
         dist, self_flat_params, _ = self._to_dist()
         flat_params, _ = ravel_pytree(params)
         if len(flat_params) != len(self_flat_params):
@@ -30,15 +22,6 @@ class ParamsMeanField(NamedTuple):
         return dist.log_prob(flat_params)
 
     def sample(self, seed, n_samples):
-        """Samples parameters.
-
-        Args:
-            seed (PRNGKey): Seed needed for stateless sampling.
-            n_samples (int): The number of params samples to return.
-
-        Returns:
-            Array: N samples of params, vectorized to the first axis.
-        """
         dist, _, pytree_def = self._to_dist()
         samples = dist.sample(seed=seed, sample_shape=(n_samples,))
         pytree_def = jax.vmap(pytree_def)
