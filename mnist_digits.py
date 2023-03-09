@@ -1,4 +1,5 @@
 from functools import partial
+from itertools import cycle
 from typing import List
 
 import equinox as eqx
@@ -90,23 +91,30 @@ class Model(eqx.Module):
         else:
             return hidden_states, x
 
-    def sample(self, horizon, initial_state, inputs=None, *, key=None):
-        sequence_length = horizon if inputs is None else inputs.shape[0]
-        ssms = [layer.cell.ssm(sequence_length) for layer in self.layers]
+    def sample(self, prefix, x, *, key=None):
+        ssms = [layer.cell.ssm(x.shape[0]) for layer in self.layers]
+        hidden = [layer.cell.init_state for layer in self.layers]
+        hidden, _ = self(x[:prefix], ssm=ssms, hidden=hidden)
 
-        def f(carry, x):
-            i, carry, prev_x = carry
-            if x is None:
-                x = prev_x
-            else:
-                x = jnp.where(i >= horizon, prev_x, x)
-            x = x[None, :]
-            out_carry, out = self(x, convolve=False, ssm=ssms, hidden=carry)
-            out = out.argmax(-1).astype(jnp.float32)
-            return (i + 1, out_carry, out), out
+        def loop(i, cur):
+            x, rng, hidden = cur
+            r, rng = jax.random.split(rng)
+            hidden, out = self(x[jnp.arange(1, 2) * i], ssm=ssms, hidden=hidden)
 
-        _, out = jax.lax.scan(f, (0,) + initial_state, inputs)
-        return out
+            def update(x, out):
+                p = jax.random.categorical(r, out[0])
+                x = x.at[i + 1, 0].set(p)
+                return x
+
+            x = update(x, out)
+            return x, rng, hidden
+
+        return jax.lax.fori_loop(
+            prefix,
+            x.shape[0],
+            jax.jit(loop),
+            (x, jax.random.PRNGKey(666), hidden),
+        )[0]
 
 
 def create_mnist_dataset(bsz=32):
@@ -120,10 +128,10 @@ def create_mnist_dataset(bsz=32):
         ]
     )
     train = torchvision.datasets.MNIST(
-        "./data", train=True, download=True, transform=tf
+        "/cluster/scratch/yardas/mnist", train=True, download=True, transform=tf
     )
     test = torchvision.datasets.MNIST(
-        "./data", train=False, download=True, transform=tf
+        "/cluster/scratch/yardas/mnist", train=False, download=True, transform=tf
     )
     # Return data loaders, with the provided batch size
     trainloader = data.DataLoader(
@@ -141,7 +149,7 @@ def create_mnist_dataset(bsz=32):
 
 def sample_image_prefix(
     model,
-    dataloader,
+    data_iter,
     prefix=300,
     imshape=(28, 28),
     batch_size=6,
@@ -151,22 +159,16 @@ def sample_image_prefix(
     import matplotlib.pyplot as plt
     import numpy as onp
 
-    example = np.array(next(iter(dataloader))[0].numpy())
+    example = np.array(next(data_iter)[0].numpy())
     batch = example[:batch_size].shape[0]
     length = example.shape[1]
     assert length == onp.prod(imshape)
-    it = iter(dataloader)
-    image = next(it)[0].numpy().astype(np.float32)
+    image = next(data_iter)[0].numpy().astype(np.float32)
     input_image = np.pad(image[:, :-1], [(0, 0), (1, 0), (0, 0)], constant_values=0)
     curr = input_image[:batch_size]
     _, out1 = jax.vmap(model)(image[:batch_size])
     out1 = out1.argmax(-1)
-    hidden = [
-        np.tile(layer.cell.init_state, (batch_size, 1, 1)) for layer in model.layers
-    ]
-    out = jax.vmap(model.sample, (None, 0, 0))(
-        prefix, (hidden, jnp.zeros_like(curr[:, 0])), curr
-    )
+    out = jax.vmap(model.sample, (None, 0))(prefix, curr.copy())
     # Visualization
     if save:
         for k in range(batch):
@@ -186,13 +188,12 @@ def sample_image_prefix(
 
 def main(
     learning_rate=1e-3,
-    steps=5000,
+    steps=100,
     hidden_size=128,
     seed=777,
 ):
     data_key, loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed), 3)
     trainloader, testloader, n_classes, in_dim = create_mnist_dataset(128)
-    iter_data = iter(trainloader)
 
     model = Model(
         n_layers=4,
@@ -225,28 +226,31 @@ def main(
     @eqx.filter_jit
     def make_step(model, x, y, opt_state):
         loss, grads = compute_loss(model, x, y)
-        grads = eqx.tree_at(cells, grads, replace_fn=lambda x: x * 10.0)
+        grads = eqx.tree_at(cells, grads, replace_fn=lambda x: x * 0.1)
         updates, opt_state = optim.update(grads, opt_state)
         model = eqx.apply_updates(model, updates)
         return loss, model, opt_state
 
     optim = optax.adam(learning_rate)
     opt_state = optim.init(model)
-    for step, (x, y) in zip(range(steps), iter_data):
-        x, y = [d.numpy() for d in (x, y)]
-        y = x[:, 1:, 0]
-        x = x[:, :-1]
-        loss, model, opt_state = make_step(model, x, y, opt_state)
-        loss = loss.item()
-        print(f"step={step}, loss={loss}")
+    test_iter = iter(cycle(testloader))
+    for _ in range(steps):
+        for step, (x, y) in enumerate(trainloader):
+            x, y = [d.numpy() for d in (x, y)]
+            y = x[..., 0]
+            x = np.pad(x[:, :-1], [(0, 0), (1, 0), (0, 0)])
+            loss, model, opt_state = make_step(model, x, y, opt_state)
+            loss = loss.item()
+            if step % 100 == 0:
+                print("Step %d: loss = %.3f" % (step, loss))
 
-    xs, ys = [d.numpy() for d in next(iter(testloader))]
-    ys = xs[:, 1:, 0]
-    xs = xs[:, :-1]
-    logits = jax.vmap(lambda x: model(x, True))(xs)[1]
-    final_accuracy = jnp.mean((logits.argmax(-1)) == ys)
-    print(f"final_accuracy={final_accuracy}")
-    sample_image_prefix(model, testloader)
+        xs, ys = [d.numpy() for d in next(test_iter)]
+        ys = xs[..., 0]
+        xs = np.pad(xs[:, :-1], [(0, 0), (1, 0), (0, 0)])
+        logits = jax.vmap(lambda x: model(x, True))(xs)[1]
+        final_accuracy = jnp.mean((logits.argmax(-1)) == ys)
+        print(f"final_accuracy={final_accuracy}")
+        sample_image_prefix(model, test_iter)
 
 
 if __name__ == "__main__":
