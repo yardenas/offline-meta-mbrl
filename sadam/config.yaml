@@ -1,0 +1,17 @@
+training:
+  safe: True
+  cost_limit: 25
+  log_dir: results
+  seed: 0
+  time_limit: 1000
+  episodes_per_task: 5
+  epochs: 200
+  eval_every: 5
+  eval_trials: 1
+  action_repeat: 1
+  render_episodes: 1
+  render_options: { camera_id: "fixedfar" }
+  jit: True
+  precision: 32
+  parallel_envs: 20
+  task_batch_size: 60

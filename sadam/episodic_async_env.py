@@ -160,10 +160,11 @@ class EpisodicAsync:
             payload = (
                 "reset",
                 (),
-                {"seed": s, "return_info": False, "options": task_options},
+                {"seed": s, "options": task_options},
             )
             parent.send((Protocol.CALL, payload))
-        return np.asarray(self.call_wait())
+        outs = np.asarray([x[0] for x in self.call_wait()])
+        return outs
 
 
 def _worker(ctor, conn, time_limit):

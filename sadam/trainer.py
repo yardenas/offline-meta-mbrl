@@ -1,10 +1,10 @@
 import os
-from types import SimpleNamespace
 from typing import Any, Callable, Iterable, List, Optional
 
 import cloudpickle
 import numpy as np
 from gymnasium import Env
+from omegaconf import DictConfig
 
 from sadam import episodic_async_env, logging, sadam, training, utils
 
@@ -14,7 +14,7 @@ TaskSamplerFactory = Callable[[int, Optional[bool]], Iterable[Any]]
 class Trainer:
     def __init__(
         self,
-        config: SimpleNamespace,
+        config: DictConfig,
         make_env: Callable[[], Env],
         task_sampler: TaskSamplerFactory,
         agent: Optional[sadam.SAdaM] = None,
@@ -35,21 +35,23 @@ class Trainer:
 
     def __enter__(self):
         if self.namespace is not None:
-            log_path = f"{self.config.log_dir}/{self.namespace}"
+            log_path = f"{self.config.training.log_dir}/{self.namespace}"
         else:
-            log_path = self.config.log_dir
+            log_path = self.config.training.log_dir
         self.state_writer = logging.StateWriter(log_path)
-        time_limit = self.config.time_limit // self.config.action_repeat
+        time_limit = (
+            self.config.training.time_limit // self.config.training.action_repeat
+        )
         self.env = episodic_async_env.EpisodicAsync(
-            self.make_env, self.config.parallel_envs, time_limit
+            self.make_env, self.config.training.parallel_envs, time_limit
         )
         # Get next batch of tasks.
         tasks = next(utils.grouper(self.tasks(train=True), self.env.num_envs))
         if self.seeds is not None:
             self.env.reset(seed=self.seeds, options={"task": tasks})
         else:
-            self.env.reset(seed=self.config.seed, options={"task": tasks})
-        self.logger = logging.TrainingLogger(self.config.log_dir)
+            self.env.reset(seed=self.config.training.seed, options={"task": tasks})
+        self.logger = logging.TrainingLogger(self.config.training.log_dir)
         if self.agent is None:
             self.agent = sadam.SAdaM(self.config, self.logger)
         return self
@@ -62,19 +64,22 @@ class Trainer:
     def train(self, epochs: Optional[int] = None):
         epoch, logger, state_writer = self.epoch, self.logger, self.state_writer
         assert logger is not None and state_writer is not None
-        for epoch in range(epoch, epochs or self.config.epochs):
+        for epoch in range(epoch, epochs or self.config.training.epochs):
             print(f"Training epoch #{epoch}")
             self._step(
                 train=True,
-                episodes_per_task=self.config.episodes_per_task,
+                episodes_per_task=self.config.training.episodes_per_task,
                 prefix="train",
                 epoch=epoch,
             )
-            if self.config.eval_trials and (epoch + 1) % self.config.eval_every == 0:
+            if (
+                self.config.training.eval_trials
+                and (epoch + 1) % self.config.training.eval_every == 0
+            ):
                 print("Evaluating...")
                 self._step(
                     train=False,
-                    episodes_per_task=self.config.eval_episodes_per_task,
+                    episodes_per_task=self.config.training.eval_episodes_per_task,
                     prefix="eval",
                     epoch=epoch,
                 )
@@ -95,10 +100,10 @@ class Trainer:
         )
         step = (
             epoch
-            * config.episodes_per_task
-            * config.action_repeat
-            * config.time_limit
-            * config.parallel_envs
+            * config.training.episodes_per_task
+            * config.training.action_repeat
+            * config.training.time_limit
+            * config.training.parallel_envs
         )
         objective, cost_rate, feasibilty = summary.metrics
         logger.log_summary(
@@ -131,14 +136,14 @@ class Trainer:
         return rs
 
     def tasks(self, train: bool) -> Iterable[Any]:
-        return self.tasks_sampler(self.config.task_batch_size, train)
+        return self.tasks_sampler(self.config.training.task_batch_size, train)
 
     @classmethod
-    def from_pickle(cls, config: SimpleNamespace, namespace: Optional[str] = None):
+    def from_pickle(cls, config: DictConfig, namespace: Optional[str] = None):
         if namespace is not None:
-            log_path = f"{config.log_dir}/{namespace}"
+            log_path = f"{config.training.log_dir}/{namespace}"
         else:
-            log_path = config.log_dir
+            log_path = config.training.log_dir
         with open(os.path.join(log_path, "state.pkl"), "rb") as f:
             make_env, env_rs, agent, epoch, task_sampler = cloudpickle.load(f).values()
         print(f"Resuming experiment from: {log_path}...")

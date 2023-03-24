@@ -1,14 +1,13 @@
-from types import SimpleNamespace
-
 import numpy as np
 from numpy import typing as npt
+from omegaconf import DictConfig
 
 from sadam.logging import TrainingLogger
 from sadam.trajectory import Trajectory
 
 
 class SAdaM:
-    def __init__(self, config: SimpleNamespace, logger: TrainingLogger):
+    def __init__(self, config: DictConfig, logger: TrainingLogger):
         self.config = config
         self.logger = logger
 
