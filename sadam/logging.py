@@ -10,11 +10,13 @@ import numpy as np
 from numpy import typing as npt
 from tensorboardX import SummaryWriter
 
+from sadam import metrics as m
+
 
 class TrainingLogger:
     def __init__(self, log_dir):
         self._writer = SummaryWriter(log_dir, flush_secs=60)
-        self._metrics = defaultdict(metrics.Mean)
+        self._metrics = defaultdict(m.MetricsAccumulator)
         self.log_dir = log_dir
 
     def __getitem__(self, item: str):
@@ -37,9 +39,13 @@ class TrainingLogger:
     def log_metrics(self, step: int, flush: bool = False):
         print("\n----Training step {} summary----".format(step))
         for k, v in self._metrics.items():
-            val = float(v.result())
-            print("{:<40} {:<.4f}".format(k, val))
-            self._writer.add_scalar(k, val, step)
+            metrics = v.result()
+            print(
+                "{:<40} mean: {:<.4f} stddev: {:<.4f} min: {:<.4f} max: {:<.4f}".format(
+                    k, metrics.mean, metrics.std, metrics.min, metrics.max
+                )
+            )
+            self._writer.add_scalar(k, metrics, step)
             v.reset_states()
         if flush:
             self._writer.flush()
@@ -79,7 +85,7 @@ class StateWriter:
         self.log_dir = log_dir
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
-        self.queue = Queue(maxsize=5)
+        self.queue: Queue[bytes] = Queue(maxsize=5)
         self._thread = Thread(name="state_writer", target=self._worker)
         self._thread.start()
 
