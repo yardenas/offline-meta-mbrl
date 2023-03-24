@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import NamedTuple, TypeAlias
+from typing import NamedTuple
 
 import numpy as np
 from numpy import typing as npt
@@ -13,7 +13,7 @@ class Transition(NamedTuple):
     cost: npt.NDArray[np.float32 | np.float64]
 
 
-TrajectoryData: TypeAlias = Transition
+TrajectoryData = Transition
 
 
 @dataclass
