@@ -130,7 +130,7 @@ class Trainer:
         ]
         if not rs:
             rs = [
-                state.get_state()["state"]["state"]
+                state.bit_generator.state["state"]["state"]
                 for state in self.env.get_attr("np_random")
             ]
         return rs

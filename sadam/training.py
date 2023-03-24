@@ -62,8 +62,7 @@ def epoch(
     batches = list(utils.grouper(tasks, env.num_envs))
     for batch in batches:
         assert len(batch) == env.num_envs
-        tasks = zip(*batch)
-        env.reset(options={"task": tasks})
+        env.reset(options={"task": batch})
         samples = interact(
             agent,
             env,

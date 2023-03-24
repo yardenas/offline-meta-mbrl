@@ -94,11 +94,11 @@ class EpisodicAsync:
             parent.send((Protocol.CALL, payload))
 
     def step_wait(self, **kwargs):
-        observations, rewards, dones, infos = zip(*self._receive())
+        observations, rewards, terminals, truncated, infos = zip(*self._receive())
         return (
             np.asarray(observations),
             np.asarray(rewards),
-            np.asarray(dones, dtype=bool),
+            np.asarray(truncated, dtype=bool) | np.asarray(terminals, dtype=bool),
             infos,
         )
 

@@ -22,7 +22,7 @@ def test_training():
         return env
 
     def task_sampler(dummy: int, dummy2: Optional[bool] = False) -> Iterable[int]:
-        while True:
+        for _ in range(cfg.training.task_batch_size):
             yield 1
 
     with Trainer(cfg, make_env, task_sampler) as trainer:
