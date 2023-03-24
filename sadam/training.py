@@ -6,11 +6,12 @@ from tqdm import tqdm
 from sadam import utils
 from sadam.episodic_async_env import EpisodicAsync
 from sadam.iteration_summary import IterationSummary
+from sadam.sadam import SAdaM
 from sadam.trajectory import Trajectory, Transition
 
 
 def interact(
-    agent: Agent,
+    agent: SAdaM,
     environment: EpisodicAsync,
     num_episodes: int,
     train: bool,
@@ -25,7 +26,7 @@ def interact(
         while episode_count < num_episodes:
             if render_episodes:
                 trajectory.frames.append(environment.render(render_mode))
-            actions = agent(observations, train)
+            actions = agent(observations)
             next_observations, rewards, done, infos = environment.step(actions)
             costs = np.array([info.get("cost", 0) for info in infos])
             transition = Transition(
@@ -50,7 +51,7 @@ def interact(
 
 
 def epoch(
-    agent: Agent,
+    agent: SAdaM,
     env: EpisodicAsync,
     tasks: Iterable[Any],
     episodes_per_task: int,

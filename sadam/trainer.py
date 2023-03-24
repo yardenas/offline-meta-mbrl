@@ -1,14 +1,14 @@
 import os
 from types import SimpleNamespace
-from typing import Any, Callable, Iterable, List, Optional, TypeAlias
+from typing import Any, Callable, Iterable, List, Optional
 
 import cloudpickle
 import numpy as np
 from gymnasium import Env
 
-from sadam import agents, episodic_async_env, logging, training, utils
+from sadam import episodic_async_env, logging, sadam, training, utils
 
-TaskSamplerFactory: TypeAlias = Callable[[int, Optional[bool]], Iterable[Any]]
+TaskSamplerFactory = Callable[[int, Optional[bool]], Iterable[Any]]
 
 
 class Trainer:
@@ -17,7 +17,7 @@ class Trainer:
         config: SimpleNamespace,
         make_env: Callable[[], Env],
         task_sampler: TaskSamplerFactory,
-        agent: Optional[agents.Agent] = None,
+        agent: Optional[sadam.SAdaM] = None,
         start_epoch: int = 0,
         seeds: Optional[List[int]] = None,
         namespace: Optional[str] = None,
@@ -51,11 +51,7 @@ class Trainer:
             self.env.reset(seed=self.config.seed, options={"task": tasks})
         self.logger = logging.TrainingLogger(self.config.log_dir)
         if self.agent is None:
-            self.agent = agents.make(
-                self.config,
-                self.env.observation_space,
-                self.env.action_space,
-            )
+            self.agent = sadam.SAdaM(self.config, self.logger)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
