@@ -1,3 +1,5 @@
+from typing import Union
+
 import numpy as np
 from gymnasium import spaces
 from numpy import typing as npt
@@ -8,7 +10,7 @@ from sadam.logging import TrainingLogger
 from sadam.replay_buffer import ReplayBuffer
 from sadam.trajectory import TrajectoryData
 
-FloatArray = npt.NDArray[np.float32]
+FloatArray = npt.NDArray[Union[np.float32, np.float64]]
 
 
 class SAdaM:
@@ -51,6 +53,25 @@ class SAdaM:
         self.obs_normalizer.update_state(
             np.concatenate(
                 [trajectory.observation, trajectory.next_observation[:, -1:]]
+            )
+        )
+        standardized_obs = _normalize(
+            trajectory.observation,
+            self.obs_normalizer.result.mean,
+            self.obs_normalizer.result.std,
+        )
+        standardized_next_obs = _normalize(
+            trajectory.next_observation,
+            self.obs_normalizer.result.mean,
+            self.obs_normalizer.result.std,
+        )
+        self.replay_buffer.add(
+            TrajectoryData(
+                standardized_obs,
+                standardized_next_obs,
+                trajectory.action,
+                trajectory.reward,
+                trajectory.cost,
             )
         )
 
