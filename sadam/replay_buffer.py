@@ -70,10 +70,14 @@ class ReplayBuffer:
             (trajectory.action, trajectory.reward, trajectory.cost),
         ):
             data[episode_slice] = val[:batch_size].astype(self.dtype)
-        observation = trajectory.observation[:batch_size].astype(self.dtype)
+        observation = np.concatenate(
+            [
+                trajectory.observation[:batch_size],
+                trajectory.next_observation[:batch_size, -1:],
+            ],
+            axis=1,
+        ).astype(self.dtype)
         self.observation[episode_slice] = observation
-        next_obs = trajectory.next_observation[:batch_size].astype(self.dtype)
-        self.observation[episode_slice, -1] = next_obs
         self.episode_id = (self.episode_id + batch_size) % capacity
         self._valid_episodes = min(self._valid_episodes + batch_size, capacity)
 

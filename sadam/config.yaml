@@ -20,5 +20,5 @@ sadam:
   replay_buffer:
     batch_size: 128
     sequence_length: 64
-    
+    capacity: 1000
 

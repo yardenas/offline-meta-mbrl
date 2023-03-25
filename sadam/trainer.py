@@ -53,7 +53,12 @@ class Trainer:
             self.env.reset(seed=self.config.training.seed, options={"task": tasks})
         self.logger = logging.TrainingLogger(self.config.training.log_dir)
         if self.agent is None:
-            self.agent = sadam.SAdaM(self.config, self.logger)
+            self.agent = sadam.SAdaM(
+                self.env.observation_space,
+                self.env.action_space,
+                self.config,
+                self.logger,
+            )
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

@@ -19,6 +19,7 @@ def test_training():
         import gymnasium as gym
 
         env = gym.make("Pendulum-v1")
+        env._max_episode_steps = cfg.training.time_limit  # type: ignore
         return env
 
     def task_sampler(dummy: int, dummy2: Optional[bool] = False) -> Iterable[int]:

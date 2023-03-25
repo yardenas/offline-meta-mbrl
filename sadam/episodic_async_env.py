@@ -10,6 +10,9 @@ from typing import Callable
 import cloudpickle
 import numpy as np
 from gymnasium import Env
+from gymnasium.spaces import Box
+from gymnasium.wrappers.clip_action import ClipAction
+from gymnasium.wrappers.rescale_action import RescaleAction
 from gymnasium.wrappers.time_limit import TimeLimit
 
 
@@ -170,6 +173,9 @@ class EpisodicAsync:
 def _worker(ctor, conn, time_limit):
     try:
         env = TimeLimit(cloudpickle.loads(ctor)(), time_limit)
+        env = RescaleAction(env, -1.0, 1.0)
+        env.action_space = Box(-1.0, 1.0, env.action_space.shape, np.float32)
+        env = ClipAction(env)
         while True:
             try:
                 # Only block for short times to have keyboard exceptions be raised.

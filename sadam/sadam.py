@@ -44,7 +44,9 @@ class SAdaM:
         normalized_obs = _normalize(
             observation, self.obs_normalizer.result.mean, self.obs_normalizer.result.std
         )
-        return np.ones_like(normalized_obs)
+        return (
+            np.ones((observation.shape[0], self.replay_buffer.action.shape[-1])) * 5.0
+        )
 
     def observe(self, trajectory: TrajectoryData):
         """
@@ -52,8 +54,9 @@ class SAdaM:
         """
         self.obs_normalizer.update_state(
             np.concatenate(
-                [trajectory.observation, trajectory.next_observation[:, -1:]]
-            )
+                [trajectory.observation, trajectory.next_observation[:, -1:]], axis=1
+            ),
+            axis=(0, 1),
         )
         standardized_obs = _normalize(
             trajectory.observation,
@@ -91,6 +94,10 @@ class SAdaM:
         self.logger = TrainingLogger(self.config.log_dir)
 
 
-def _normalize(observation: FloatArray, mean: float, std: float) -> FloatArray:
+def _normalize(
+    observation: FloatArray,
+    mean: FloatArray,
+    std: FloatArray,
+) -> FloatArray:
     diff = observation - mean
     return diff / (std + 1e-8)
