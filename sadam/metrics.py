@@ -42,6 +42,7 @@ class MetricsAccumulator:
             )
             self._count += 1
 
+    @property
     def result(self):
         assert self._state is not None
         state = self._state

@@ -39,7 +39,7 @@ class TrainingLogger:
     def log_metrics(self, step: int, flush: bool = False):
         print("\n----Training step {} summary----".format(step))
         for k, v in self._metrics.items():
-            metrics = v.result()
+            metrics = v.result
             print(
                 "{:<40} mean: {:<.4f} stddev: {:<.4f} min: {:<.4f} max: {:<.4f}".format(
                     k, metrics.mean, metrics.std, metrics.min, metrics.max

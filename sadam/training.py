@@ -39,7 +39,7 @@ def interact(
             trajectory.transitions.append(transition)
             observations = next_observations
             if done.all():
-                agent.observe(trajectory)
+                agent.observe(trajectory.as_numpy())
                 # on_episode_end(episodes[-1], train, adapt)
                 render_episodes = max(render_episodes - 1, 0)
                 observations = environment.reset()
