@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, NamedTuple
 
 import equinox as eqx
 import jax
@@ -8,6 +8,11 @@ import jax.numpy as jnp
 import sadam.s4 as s4
 
 
+class Prediction(NamedTuple):
+    next_state: jax.Array
+    reward: jax.Array
+
+
 class SequenceBlock(eqx.Module):
     cell: s4.S4Cell
     out: eqx.nn.Linear
@@ -15,9 +20,9 @@ class SequenceBlock(eqx.Module):
     norm: eqx.nn.LayerNorm
     hippo_n: int
 
-    def __init__(self, hidden_size, hippo_n, *, key):
+    def __init__(self, hidden_size, hippo_n, sequence_length, *, key):
         cell_key, encoder_key, decoder_key = jax.random.split(key, 3)
-        self.cell = s4.S4Cell(hippo_n, hidden_size, key=cell_key)
+        self.cell = s4.S4Cell(hippo_n, hidden_size, sequence_length, key=cell_key)
         self.out = eqx.nn.Linear(hidden_size, hidden_size, key=encoder_key)
         self.out2 = eqx.nn.Linear(hidden_size, hidden_size, key=decoder_key)
         self.norm = eqx.nn.LayerNorm(
@@ -34,7 +39,7 @@ class SequenceBlock(eqx.Module):
                 x, True if x.shape[0] > 32 else False
             )
         else:
-            ssm = ssm if ssm is not None else self.cell.ssm(skip.shape[0])
+            ssm = ssm if ssm is not None else self.cell.ssm
             hidden = hidden if hidden is not None else self.cell.init_state
             fn = lambda carry, x: self.cell(carry, x, ssm)
             pred_fn = lambda x: jax.lax.scan(fn, hidden, x)
@@ -51,48 +56,82 @@ class SequenceBlock(eqx.Module):
 class Model(eqx.Module):
     layers: List[SequenceBlock]
     encoder: eqx.nn.Linear
-    decoder: eqx.nn.Linear
+    state_decoder: eqx.nn.Linear
+    reward_decoder: eqx.nn.Linear
 
-    def __init__(self, n_layers, in_size, out_size, hippo_n, hidden_size, *, key):
+    def __init__(
+        self, n_layers, in_size, out_size, hippo_n, hidden_size, sequence_length, *, key
+    ):
         keys = jax.random.split(key, n_layers + 2)
         self.layers = [
-            SequenceBlock(hidden_size, hippo_n, key=key) for key in keys[:n_layers]
+            SequenceBlock(hidden_size, hippo_n, sequence_length, key=key)
+            for key in keys[:n_layers]
         ]
         self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
-        self.decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
+        self.state_decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
+        self.reward_decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
 
-    def __call__(self, x, convolve=False, *, key=None, ssm=None, hidden=None):
+    def __call__(
+        self,
+        state_sequence,
+        action_sequence,
+        convolve=False,
+        *,
+        key=None,
+        ssm=None,
+        hidden=None
+    ):
         if hidden is None or ssm is None:
             hidden = [None] * len(self.layers)
             ssm = [None] * len(self.layers)
-        x = jax.vmap(self.encoder)(x)
+        x = jax.vmap(self.encoder)(
+            jnp.concatenate([state_sequence, action_sequence], -1)
+        )
         hidden_states = []
         for layer_ssm, layer_hidden, layer in zip(ssm, hidden, self.layers):
             hidden, x = layer(x, convolve=convolve, ssm=layer_ssm, hidden=layer_hidden)
             hidden_states.append(hidden)
-        x = jax.vmap(self.decoder)(x)
+        next_state = jax.vmap(self.state_decoder)(x)
+        reward = jax.vmap(self.reward_decoder)(x)
         if convolve:
-            return None, x
+            return None, Prediction(next_state, reward)
         else:
-            return hidden_states, x
+            return hidden_states, Prediction(next_state, reward)
 
-    def sample(self, horizon, initial_state, inputs=None, *, key=None):
-        sequence_length = horizon if inputs is None else inputs.shape[0]
-        ssms = [layer.cell.ssm(sequence_length) for layer in self.layers]
-
+    def sample(
+        self,
+        horizon,
+        initial_state,
+        initial_hidden,
+        action_sequence=None,
+        policy=None,
+        ssm=None,
+        *,
+        key
+    ):
         def f(carry, x):
-            i, carry, prev_x = carry
-            if x is None:
-                x = prev_x
-            else:
-                prev_x = jnp.concatenate([prev_x[:3], x[-1:]], axis=-1)
-                x = jnp.where(i >= horizon, prev_x, x)
-            x = x[None]  # pyright: ignore
-            out_carry, out = self(x, convolve=False, ssm=ssms, hidden=carry)
-            out = out[0]
-            return (i + 1, out_carry, out), out
+            prev_hidden, prev_state = carry
+            action, key = x
+            if action is None:
+                assert policy is not None
+                action = policy(prev_state).sample(key)
+            out_hidden, out = self(
+                prev_state, action, convolve=False, ssm=ssm, hidden=prev_hidden
+            )
+            return (out_hidden, out.next_state), out
 
-        _, out = jax.lax.scan(f, (0,) + initial_state, inputs)
+        if ssm is None:
+            ssm = [layer.cell.ssm for layer in self.layers]
+        if action_sequence is None:
+            assert action_sequence is not None
+            action_sequence = [None] * len(horizon)
+        init = (initial_hidden, initial_state)
+        inputs = (action_sequence, jax.random.split(key, len(horizon)))
+        _, out = jax.lax.scan(
+            f,
+            init,
+            inputs,
+        )
         return out
 
     @property

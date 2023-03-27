@@ -104,7 +104,7 @@ def kernel_DPLR(_lambda, p, q, b, c, step, sequence_length):
     return out.real
 
 
-def _convolve(_lambda, p, b, c, d, step, u, fft):
+def _convolve(_lambda, p, b, c, d, step, u, sequence_length, fft):
     k = kernel_DPLR(
         _lambda,
         p,
@@ -112,15 +112,15 @@ def _convolve(_lambda, p, b, c, d, step, u, fft):
         b,
         c,
         step,
-        u.shape[0],
+        sequence_length,
     )
     if fft:
         ud = jnp.fft.rfft(jnp.pad(u, (0, k.shape[0])))
-        Kd = jnp.fft.rfft(jnp.pad(k, (0, u.shape[0])))
+        Kd = jnp.fft.rfft(jnp.pad(k, (0, sequence_length)))
         out = ud * Kd
-        out = jnp.fft.irfft(out)[: u.shape[0]]
+        out = jnp.fft.irfft(out)[:sequence_length]
     else:
-        out = jnp.convolve(u, k, mode="full")[: u.shape[0]]
+        out = jnp.convolve(u, k, mode="full")[:sequence_length]
     return (out + d * u).real
 
 
@@ -132,8 +132,9 @@ class S4Cell(eqx.Module):
     c: jax.Array
     d: jax.Array
     step: jax.Array
+    sequence_length: int
 
-    def __init__(self, hippo_n, input_size, *, key):
+    def __init__(self, hippo_n, input_size, sequnece_length, *, key):
         hippo_params = hippo_initializer(hippo_n)
         _lambda_real, _lambda_imag, p, b = [
             jnp.tile(x, (input_size, 1)) for x in hippo_params
@@ -152,6 +153,7 @@ class S4Cell(eqx.Module):
                 1,
             ),
         )
+        self.sequence_length = sequnece_length
 
     @jax.vmap
     def __call__(self, x_k_1, u_k, ssm):
@@ -163,7 +165,7 @@ class S4Cell(eqx.Module):
         return x_k, (y_k + self.d * u_k).real.squeeze(-1)
 
     def convolve(self, u, fft=False):
-        return jax.vmap(_convolve, (0,) * 6 + (1, None), 1)(
+        return jax.vmap(_convolve, (0,) * 6 + (1, None, None), 1)(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
             self.b,
@@ -171,10 +173,12 @@ class S4Cell(eqx.Module):
             self.d,
             jnp.exp(self.step),
             u,
+            self.sequence_length,
             fft,
         )
 
-    def ssm(self, sequence_length):
+    @property
+    def ssm(self):
         return jax.vmap(discrete_DPLR, in_axes=(0,) * 6 + (None,))(
             jnp.clip(self.lambda_real, None, -1e-4) + 1j * self.lambda_imag,
             self.p,
@@ -182,7 +186,7 @@ class S4Cell(eqx.Module):
             self.b,
             self.c[..., 0] + 1j * self.c[..., 1],
             jnp.exp(self.step),
-            sequence_length,
+            self.sequence_length,
         )
 
     @property
