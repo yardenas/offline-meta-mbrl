@@ -60,16 +60,24 @@ class Model(eqx.Module):
     reward_decoder: eqx.nn.Linear
 
     def __init__(
-        self, n_layers, in_size, out_size, hippo_n, hidden_size, sequence_length, *, key
+        self,
+        n_layers,
+        state_dim,
+        action_dim,
+        hippo_n,
+        hidden_size,
+        sequence_length,
+        *,
+        key
     ):
         keys = jax.random.split(key, n_layers + 2)
         self.layers = [
             SequenceBlock(hidden_size, hippo_n, sequence_length, key=key)
             for key in keys[:n_layers]
         ]
-        self.encoder = eqx.nn.Linear(in_size, hidden_size, key=keys[-2])
-        self.state_decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
-        self.reward_decoder = eqx.nn.Linear(hidden_size, out_size, key=keys[-1])
+        self.encoder = eqx.nn.Linear(state_dim + action_dim, hidden_size, key=keys[-2])
+        self.state_decoder = eqx.nn.Linear(hidden_size, state_dim, key=keys[-1])
+        self.reward_decoder = eqx.nn.Linear(hidden_size, 1, key=keys[-1])
 
     def __call__(
         self,
@@ -125,6 +133,8 @@ class Model(eqx.Module):
         if action_sequence is None:
             assert action_sequence is not None
             action_sequence = [None] * len(horizon)
+        else:
+            assert len(action_sequence) == horizon
         init = (initial_hidden, initial_state)
         inputs = (action_sequence, jax.random.split(key, len(horizon)))
         _, out = jax.lax.scan(
