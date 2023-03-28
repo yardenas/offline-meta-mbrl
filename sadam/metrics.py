@@ -20,8 +20,12 @@ class MetricsAccumulator:
     def update_state(
         self, sample: float | npt.NDArray[Any], axis: int | Sequence[int] = 0
     ):
-        if isinstance(sample, float):
-            sample = np.array([sample])
+        if isinstance(sample, float) or sample.ndim == 0:
+            sample = np.array(
+                [
+                    sample,
+                ]
+            )
         new_mean = sample.mean(axis=axis)
         new_std = sample.std(axis=axis)
         new_min = sample.min(axis=axis)

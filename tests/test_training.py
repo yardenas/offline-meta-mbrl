@@ -9,6 +9,14 @@ def test_training():
     with initialize(version_base=None, config_path="../sadam/"):
         cfg = compose(
             config_name="config",
+            overrides=[
+                "training.time_limit=100",
+                "training.episodes_per_task=1",
+                "training.task_batch_size=20",
+                "training.parallel_envs=20",
+                "sadam.update_steps=1",
+                "sadam.replay_buffer.sequence_length=16",
+            ],
         )
     if not cfg.training.jit:
         from jax.config import config as jax_config  # pyright: ignore
@@ -20,6 +28,7 @@ def test_training():
 
         env = gym.make("Pendulum-v1")
         env._max_episode_steps = cfg.training.time_limit  # type: ignore
+
         return env
 
     def task_sampler(dummy: int, dummy2: Optional[bool] = False) -> Iterable[int]:

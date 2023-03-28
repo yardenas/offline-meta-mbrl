@@ -46,15 +46,12 @@ class SAdaM:
             **config.sadam.model,
         )
         self.model_learner = Learner(self.model, config.sadam.model_optimizer)
+        self.episodes = 0
 
     def __call__(
         self,
         observation: FloatArray,
     ) -> FloatArray:
-        """
-        Compute the next action based on the observation, update internal state
-        as needed.
-        """
         # normalized_obs = _normalize(
         #     observation, self.obs_normalizer.result.mean,
         # self.obs_normalizer.result.std
@@ -64,24 +61,22 @@ class SAdaM:
         )
 
     def observe(self, trajectory: TrajectoryData):
-        """
-        Observe a trajectory, update internal state as needed.
-        """
         self.obs_normalizer.update_state(
             np.concatenate(
                 [trajectory.observation, trajectory.next_observation[:, -1:]], axis=1
             ),
             axis=(0, 1),
         )
+        mean, stddev, *_ = self.obs_normalizer.result
         standardized_obs = _normalize(
             trajectory.observation,
-            self.obs_normalizer.result.mean,
-            self.obs_normalizer.result.std,
+            mean,
+            stddev,
         )
         standardized_next_obs = _normalize(
             trajectory.next_observation,
-            self.obs_normalizer.result.mean,
-            self.obs_normalizer.result.std,
+            mean,
+            stddev,
         )
         self.replay_buffer.add(
             TrajectoryData(
@@ -93,13 +88,15 @@ class SAdaM:
             )
         )
         self.train()
+        self.episodes += 1
 
     def train(self):
         for batch in self.replay_buffer.sample(self.config.sadam.update_steps):
-            print("dddds")
             loss, self.model, self.model_learner.state = self.update_model(
                 self.model, self.model_learner.state, batch
             )
+            self.logger["agent/model/loss"] = loss
+        self.logger.log_metrics(self.episodes)
 
     @eqx.filter_jit
     def update_model(self, model: Model, opt_state: OptState, batch: TrajectoryData):

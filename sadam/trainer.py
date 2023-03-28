@@ -7,8 +7,13 @@ from gymnasium import Env
 from omegaconf import DictConfig
 
 from sadam import episodic_async_env, logging, sadam, training, utils
+from sadam.trajectory import Trajectory
 
 TaskSamplerFactory = Callable[[int, Optional[bool]], Iterable[Any]]
+
+
+def on_episode(trajectory: Trajectory, logger: logging.TrainingLogger) -> None:
+    print(len(trajectory.transitions))
 
 
 class Trainer:
@@ -38,6 +43,7 @@ class Trainer:
             log_path = f"{self.config.training.log_dir}/{self.namespace}"
         else:
             log_path = self.config.training.log_dir
+        self.logger = logging.TrainingLogger(self.config.training.log_dir)
         self.state_writer = logging.StateWriter(log_path)
         time_limit = (
             self.config.training.time_limit // self.config.training.action_repeat
@@ -51,7 +57,6 @@ class Trainer:
             self.env.reset(seed=self.seeds, options={"task": tasks})
         else:
             self.env.reset(seed=self.config.training.seed, options={"task": tasks})
-        self.logger = logging.TrainingLogger(self.config.training.log_dir)
         if self.agent is None:
             self.agent = sadam.SAdaM(
                 self.env.observation_space,

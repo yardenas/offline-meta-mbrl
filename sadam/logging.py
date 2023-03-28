@@ -8,6 +8,7 @@ from typing import Any
 import cloudpickle
 import numpy as np
 from numpy import typing as npt
+from tabulate import tabulate
 from tensorboardX import SummaryWriter
 
 from sadam import metrics as m
@@ -38,15 +39,28 @@ class TrainingLogger:
 
     def log_metrics(self, step: int, flush: bool = False):
         print("\n----Training step {} summary----".format(step))
+        table = []
         for k, v in self._metrics.items():
             metrics = v.result
-            print(
-                "{:<40} mean: {:<.4f} stddev: {:<.4f} min: {:<.4f} max: {:<.4f}".format(
-                    k, metrics.mean, metrics.std, metrics.min, metrics.max
-                )
+            self._writer.add_scalars(
+                k,
+                {
+                    "mean": float(metrics.mean),
+                    "std": float(metrics.std),
+                    "min": float(metrics.min),
+                    "max": float(metrics.max),
+                },
+                step,
             )
-            self._writer.add_scalar(k, metrics, step)
+            table.append([k, *list(v.result)])
             v.reset_states()
+        print(
+            tabulate(
+                table,
+                headers=["Metric", "Mean", "Std", "Min", "Max"],
+                tablefmt="orgtbl",
+            )
+        )
         if flush:
             self._writer.flush()
 
