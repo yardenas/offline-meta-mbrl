@@ -46,8 +46,8 @@ class MetricsAccumulator:
         self._state = Metrics(
             new_mean,
             new_stddev,
-            np.minimum(self._state.min if self._count == 1 else batch_min, batch_min),
-            np.maximum(self._state.max if self._count == 1 else batch_max, batch_max),
+            np.minimum(self._state.min if self._count > 1 else batch_min, batch_min),
+            np.maximum(self._state.max if self._count > 1 else batch_max, batch_max),
         )
 
     @property
