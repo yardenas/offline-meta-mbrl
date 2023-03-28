@@ -124,26 +124,35 @@ class Model(eqx.Module):
                 assert policy is not None
                 action = policy(prev_state).sample(key)
             out_hidden, out = self(
-                prev_state, action, convolve=False, ssm=ssm, hidden=prev_hidden
+                prev_state[None],
+                action[None],
+                convolve=False,
+                ssm=ssm,
+                hidden=prev_hidden,
             )
-            return (out_hidden, out.next_state), out
+            return (out_hidden, out.next_state[0]), out
 
         if ssm is None:
-            ssm = [layer.cell.ssm for layer in self.layers]
+            ssm = self.ssm
         if action_sequence is None:
             assert action_sequence is not None
-            action_sequence = [None] * len(horizon)
+            action_sequence = [None] * horizon
         else:
             assert len(action_sequence) == horizon
         init = (initial_hidden, initial_state)
-        inputs = (action_sequence, jax.random.split(key, len(horizon)))
+        inputs = (action_sequence, jax.random.split(key, horizon))
         _, out = jax.lax.scan(
             f,
             init,
             inputs,
         )
+        out = jax.tree_map(lambda x: x.squeeze(1), out)
         return out
 
     @property
     def init_state(self):
         return [layer.cell.init_state for layer in self.layers]
+
+    @property
+    def ssm(self):
+        return [layer.cell.ssm for layer in self.layers]

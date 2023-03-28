@@ -116,11 +116,11 @@ def _convolve(_lambda, p, b, c, d, step, u, sequence_length, fft):
     )
     if fft:
         ud = jnp.fft.rfft(jnp.pad(u, (0, k.shape[0])))
-        Kd = jnp.fft.rfft(jnp.pad(k, (0, sequence_length)))
+        Kd = jnp.fft.rfft(jnp.pad(k, (0, u.shape[0])))
         out = ud * Kd
-        out = jnp.fft.irfft(out)[:sequence_length]
+        out = jnp.fft.irfft(out)[: u.shape[0]]
     else:
-        out = jnp.convolve(u, k, mode="full")[:sequence_length]
+        out = jnp.convolve(u, k, mode="full")[: u.shape[0]]
     return (out + d * u).real
 
 
@@ -155,7 +155,7 @@ class S4Cell(eqx.Module):
         )
         self.sequence_length = sequnece_length
 
-    @jax.vmap
+    @eqx.filter_vmap
     def __call__(self, x_k_1, u_k, ssm):
         ab, bb, cb = ssm
         if u_k.ndim == 0:

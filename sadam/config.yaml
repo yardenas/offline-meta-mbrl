@@ -29,4 +29,9 @@ sadam:
     lr: 1e-3
     eps: 1e-5
     clip: 0.5
+  cem:
+    num_particles: 10
+    num_iters: 1
+    num_elite: 10
+    stop_cond: 0.1
   update_steps: 100

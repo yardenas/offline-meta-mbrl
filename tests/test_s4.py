@@ -1,14 +1,14 @@
 import jax
 import numpy as np
 
-import s4
+import sadam.s4 as s4
 
 
 def test_rnn_cnn(n=8, sequence_length=16, input_size=5):
     u = np.ones((sequence_length, input_size))
-    cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+    cell = s4.S4Cell(n, input_size, sequence_length, key=jax.random.PRNGKey(666))
     y_cnn = cell.convolve(u)
-    ssm = cell.ssm(sequence_length)
+    ssm = cell.ssm
 
     def sequence(x):
         def fn(carry, x):
@@ -23,7 +23,7 @@ def test_rnn_cnn(n=8, sequence_length=16, input_size=5):
 
 def test_output_dimension_not_equal(n=8, sequence_length=16, input_size=5):
     u = np.ones((sequence_length, input_size))
-    cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+    cell = s4.S4Cell(n, input_size, sequence_length, key=jax.random.PRNGKey(666))
     y_cnn = cell.convolve(u).real
     sequence_summary = y_cnn.sum(0)
     pairwise_diffs = sequence_summary[:, None] - sequence_summary[None, :]
@@ -35,7 +35,7 @@ def test_output_dimension_not_equal(n=8, sequence_length=16, input_size=5):
 def test_kernels(n=8, sequence_length=16, input_size=5, mode="cell"):
     # Compute a HiPPO NPLR matrix.
     if mode == "cell":
-        cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+        cell = s4.S4Cell(n, input_size, sequence_length, key=jax.random.PRNGKey(666))
         _lambda = cell.lambda_real + 1j * cell.lambda_imag
         p = cell.p
         b = cell.b
@@ -60,10 +60,7 @@ def test_kernels(n=8, sequence_length=16, input_size=5, mode="cell"):
 
     if mode == "cell":
         assert cell is not None
-        assert all(
-            np.allclose(x1, x2)
-            for x1, x2 in zip((ab, bb, cb), cell.ssm(sequence_length))
-        )
+        assert all(np.allclose(x1, x2) for x1, x2 in zip((ab, bb, cb), cell.ssm))
 
     def K_conv(Ab, Bb, Cb, L):
         return jax.numpy.array(
@@ -78,7 +75,7 @@ def test_kernels(n=8, sequence_length=16, input_size=5, mode="cell"):
 
 
 def test_fft_mode(n=8, sequence_length=16, input_size=5):
-    cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+    cell = s4.S4Cell(n, input_size, sequence_length, key=jax.random.PRNGKey(666))
     _lambda = cell.lambda_real + 1j * cell.lambda_imag
     p = cell.p
     b = cell.b
@@ -101,7 +98,7 @@ def test_fft_mode(n=8, sequence_length=16, input_size=5):
 
 
 def test_fft_mode_np(n=8, sequence_length=16, input_size=5):
-    cell = s4.S4Cell(n, input_size, key=jax.random.PRNGKey(666))
+    cell = s4.S4Cell(n, input_size, sequence_length, key=jax.random.PRNGKey(666))
     u = jax.numpy.ones((sequence_length, input_size))
     y1 = cell.convolve(u, True)
     y2 = cell.convolve(u, False)
