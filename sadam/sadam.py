@@ -82,10 +82,16 @@ class SAdaM:
         ssm: list[tuple[jax.Array, jax.Array, jax.Array]],
     ) -> tuple[jax.Array, list[jax.Array]]:
         def solve(observation, hidden):
-            objective = cem.make_objective(model, 10, observation, hidden, ssm)
+            horizon = self.config.sadam.plan_horizon
+            objective = cem.make_objective(model, horizon, observation, hidden, ssm)
             action = cem.solve(
                 objective,
-                jnp.zeros((10, self.replay_buffer.action.shape[-1])),
+                jnp.zeros(
+                    (
+                        horizon,
+                        self.replay_buffer.action.shape[-1],
+                    )
+                ),
                 jax.random.PRNGKey(self.config.training.seed),
                 **self.config.sadam.cem,
             )[0]

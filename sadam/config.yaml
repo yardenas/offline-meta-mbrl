@@ -30,8 +30,9 @@ sadam:
     eps: 1e-5
     clip: 0.5
   cem:
-    num_particles: 10
-    num_iters: 1
+    num_particles: 100
+    num_iters: 10
     num_elite: 10
     stop_cond: 0.1
+  plan_horizon: 10
   update_steps: 100

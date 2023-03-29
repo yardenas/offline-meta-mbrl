@@ -68,18 +68,3 @@ def solve(
         cond, body, (key, 0, mu, stddev, -jnp.inf, initial_guess)
     )
     return best
-
-
-def _split(
-    state: jax.Array, state_dim: int, hidden_shape: tuple[int], n_hidden: int
-) -> tuple[list[jax.Array], jax.Array]:
-    hidden, system_state = state[:-state_dim], state[-state_dim:]
-    hidden = list(jnp.split(hidden, n_hidden, axis=0))
-    hidden = [x.reshape(hidden_shape) for x in hidden]
-    return hidden, system_state
-
-
-def _unsplit(hidden: list[jax.Array], system_state: jax.Array) -> jax.Array:
-    hidden = [x.reshape(-1) for x in hidden]
-    stack_hidden = jnp.concatenate(hidden, axis=0)
-    return jnp.concatenate([stack_hidden, system_state], -1)
