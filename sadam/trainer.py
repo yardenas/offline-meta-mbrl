@@ -7,13 +7,8 @@ from gymnasium import Env
 from omegaconf import DictConfig
 
 from sadam import episodic_async_env, logging, sadam, training, utils
-from sadam.trajectory import Trajectory
 
 TaskSamplerFactory = Callable[[int, Optional[bool]], Iterable[Any]]
-
-
-def on_episode(trajectory: Trajectory, logger: logging.TrainingLogger) -> None:
-    print(len(trajectory.transitions))
 
 
 class Trainer:

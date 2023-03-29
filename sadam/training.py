@@ -6,8 +6,19 @@ from tqdm import tqdm
 from sadam import utils
 from sadam.episodic_async_env import EpisodicAsync
 from sadam.iteration_summary import IterationSummary
+from sadam.logging import TrainingLogger
 from sadam.sadam import SAdaM
-from sadam.trajectory import Trajectory, Transition
+from sadam.trajectory import Trajectory, TrajectoryData, Transition
+
+
+def log_results(trajectory: TrajectoryData, logger: TrainingLogger, step: int):
+    logger.log_summary(
+        {
+            "train/episode_reward_mean": float(trajectory.reward.sum(1).mean()),
+            "train/episode_cost_mean": float(trajectory.cost.sum(1).mean()),
+        },
+        step,
+    )
 
 
 def interact(
@@ -39,7 +50,9 @@ def interact(
             trajectory.transitions.append(transition)
             observations = next_observations
             if done.all():
-                agent.observe(trajectory.as_numpy())
+                np_trajectory = trajectory.as_numpy()
+                agent.observe(np_trajectory)
+                log_results(np_trajectory, agent.logger, agent.episodes)
                 render_episodes = max(render_episodes - 1, 0)
                 observations = environment.reset()
                 episodes.append(trajectory)

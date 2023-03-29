@@ -10,10 +10,13 @@ def test_training():
         cfg = compose(
             config_name="config",
             overrides=[
-                "training.time_limit=100",
+                "training.time_limit=32",
                 "training.episodes_per_task=1",
-                "training.task_batch_size=20",
-                "training.parallel_envs=20",
+                "training.task_batch_size=5",
+                "training.parallel_envs=5",
+                "sadam.model.n_layers=1",
+                "sadam.model.hidden_size=32",
+                "sadam.model.hippo_n=8",
                 "sadam.update_steps=1",
                 "sadam.replay_buffer.sequence_length=16",
             ],
