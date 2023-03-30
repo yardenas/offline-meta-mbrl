@@ -27,7 +27,6 @@ def interact(
     num_episodes: int,
     train: bool,
     render_episodes: int = 0,
-    render_mode: str = "rgb_array",
 ):
     observations = environment.reset()
     episode_count = 0
@@ -36,7 +35,7 @@ def interact(
     with tqdm(total=num_episodes) as pbar:
         while episode_count < num_episodes:
             if render_episodes:
-                trajectory.frames.append(environment.render(render_mode))
+                trajectory.frames.append(environment.render())
             actions = agent(observations)
             next_observations, rewards, done, infos = environment.step(actions)
             costs = np.array([info.get("cost", 0) for info in infos])

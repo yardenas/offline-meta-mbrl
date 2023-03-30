@@ -5,9 +5,9 @@ training:
   seed: 0
   time_limit: 1000
   episodes_per_task: 5
+  eval_episodes_per_task: 1
   epochs: 200
   eval_every: 5
-  eval_trials: 1
   action_repeat: 1
   render_episodes: 1
   render_options: { camera_id: "fixedfar" }

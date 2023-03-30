@@ -77,10 +77,7 @@ class Trainer:
                 prefix="train",
                 epoch=epoch,
             )
-            if (
-                self.config.training.eval_trials
-                and (epoch + 1) % self.config.training.eval_every == 0
-            ):
+            if (epoch + 1) % self.config.training.eval_every == 0:
                 print("Evaluating...")
                 self._step(
                     train=False,
@@ -95,13 +92,14 @@ class Trainer:
     def _step(self, train: bool, episodes_per_task: int, prefix: str, epoch: int):
         config, agent, env, logger = self.config, self.agent, self.env, self.logger
         assert env is not None and agent is not None and logger is not None
+        render_episodes = int(not train) * self.config.training.render_episodes
         summary = training.epoch(
             agent,
             env,
             self.tasks(train=train),
             episodes_per_task,
             train=train,
-            render_episodes=int(not train),
+            render_episodes=render_episodes,
         )
         step = (
             epoch
@@ -119,7 +117,7 @@ class Trainer:
             },
             step,
         )
-        if not train:
+        if render_episodes > 0:
             logger.log_video(
                 np.asarray(summary.videos).squeeze(1)[:5],
                 step,
