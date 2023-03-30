@@ -14,7 +14,7 @@ training:
   jit: True
   precision: 32
   parallel_envs: 20
-  task_batch_size: 60
+  task_batch_size: 20
 
 sadam:
   replay_buffer:
