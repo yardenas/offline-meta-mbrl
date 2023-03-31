@@ -119,7 +119,7 @@ class Trainer:
         )
         if render_episodes > 0:
             logger.log_video(
-                np.asarray(summary.videos).squeeze(0).swapaxes(0, 1)[:5],
+                np.asarray(summary.videos)[0].swapaxes(0, 1)[:5],
                 step,
                 "video",
             )
