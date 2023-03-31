@@ -152,7 +152,7 @@ class SAdaM:
             )[1]
             state_loss = (preds.next_state - next_state_sequence) ** 2
             reward_loss = (preds.reward.squeeze(-1) - reward_sequence) ** 2
-            return 0.5 * (state_loss.mean() + reward_loss.mean() * 0.0)
+            return 0.5 * (state_loss.mean() + reward_loss.mean())
 
         loss_fn = eqx.filter_value_and_grad(loss)
         loss, grads = loss_fn(
