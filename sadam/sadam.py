@@ -35,10 +35,13 @@ class SAdaM:
         self.replay_buffer = ReplayBuffer(
             observation_shape=observation_space.shape,
             action_shape=action_space.shape,
-            max_length=config.training.time_limit,
+            max_length=config.training.time_limit // config.training.action_repeat,
             seed=config.training.seed,
             precision=config.training.precision,
-            **config.sadam.replay_buffer,
+            sequence_length=config.sadam.replay_buffer.sequence_length
+            // config.training.action_repeat,
+            batch_size=config.sadam.replay_buffer.batch_size,
+            capacity=config.sadam.replay_buffer.capacity,
         )
         self.model = Model(
             state_dim=np.prod(observation_space.shape),

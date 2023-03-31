@@ -19,6 +19,7 @@ class ActionRepeat(Wrapper):
             total_reward += reward
             total_cost += info.get("cost", 0.0)
             current_step += 1
+            done = truncated or terminal
         info["steps"] = current_step
         info["cost"] = total_cost
         return obs, total_reward, terminal, truncated, info

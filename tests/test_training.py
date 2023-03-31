@@ -17,6 +17,7 @@ def test_training():
                 "training.task_batch_size=5",
                 "training.parallel_envs=5",
                 "training.eval_every=1",
+                "training.action_repeat=4",
                 "sadam.model.n_layers=1",
                 "sadam.model.hidden_size=32",
                 "sadam.model.hippo_n=8",

@@ -40,13 +40,10 @@ class Trainer:
             log_path = self.config.training.log_dir
         self.logger = logging.TrainingLogger(self.config.training.log_dir)
         self.state_writer = logging.StateWriter(log_path)
-        time_limit = (
-            self.config.training.time_limit // self.config.training.action_repeat
-        )
         self.env = episodic_async_env.EpisodicAsync(
             self.make_env,
             self.config.training.parallel_envs,
-            time_limit,
+            self.config.training.time_limit,
             self.config.training.action_repeat,
         )
         # Get next batch of tasks.
