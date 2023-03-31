@@ -6,7 +6,7 @@ import numpy as np
 from gymnasium import Env
 from omegaconf import DictConfig
 
-from sadam import episodic_async_env, logging, sadam, training, utils
+from sadam import acting, episodic_async_env, logging, sadam, utils
 
 TaskSamplerFactory = Callable[[int, Optional[bool]], Iterable[Any]]
 
@@ -93,7 +93,7 @@ class Trainer:
         config, agent, env, logger = self.config, self.agent, self.env, self.logger
         assert env is not None and agent is not None and logger is not None
         render_episodes = int(not train) * self.config.training.render_episodes
-        summary = training.epoch(
+        summary = acting.epoch(
             agent,
             env,
             self.tasks(train=train),
@@ -119,7 +119,7 @@ class Trainer:
         )
         if render_episodes > 0:
             logger.log_video(
-                np.asarray(summary.videos).squeeze(1)[:5],
+                np.asarray(summary.videos).squeeze(0).swapaxes(0, 1)[:5],
                 step,
                 "video",
             )

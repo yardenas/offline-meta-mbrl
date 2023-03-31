@@ -2,7 +2,7 @@ from typing import Iterable, Optional
 
 from hydra import compose, initialize
 
-from sadam import training
+from sadam import acting
 from sadam.trainer import Trainer
 from sadam.trajectory import TrajectoryData
 
@@ -16,6 +16,7 @@ def test_training():
                 "training.episodes_per_task=1",
                 "training.task_batch_size=5",
                 "training.parallel_envs=5",
+                "training.eval_every=1",
                 "sadam.model.n_layers=1",
                 "sadam.model.hidden_size=32",
                 "sadam.model.hippo_n=8",
@@ -31,7 +32,7 @@ def test_training():
     def make_env():
         import gymnasium as gym
 
-        env = gym.make("Pendulum-v1")
+        env = gym.make("Pendulum-v1", render_mode="rgb_array")
         env._max_episode_steps = cfg.training.time_limit  # type: ignore
 
         return env
@@ -97,7 +98,7 @@ def test_model_learning():
         trainer.train(epochs=3)
     agent = trainer.agent
     assert agent is not None
-    trajectories = training.interact(agent, trainer.env, 1, False)[0].as_numpy()
+    trajectories = acting.interact(agent, trainer.env, 1, False)[0].as_numpy()
     normalize = lambda x: _normalize(
         x, agent.obs_normalizer.result.mean, agent.obs_normalizer.result.std
     )
