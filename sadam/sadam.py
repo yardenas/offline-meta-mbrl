@@ -121,7 +121,7 @@ class SAdaM:
                 normalize(trajectory.observation),
                 normalize(trajectory.next_observation),
                 trajectory.action,
-                trajectory.reward,
+                trajectory.reward * self.config.training.scale_reward,
                 trajectory.cost,
             )
         )
