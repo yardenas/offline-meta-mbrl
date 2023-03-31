@@ -1,14 +1,20 @@
-from typing import Any, NamedTuple, Sequence
+from dataclasses import dataclass
+from typing import Any, Sequence
 
 import numpy as np
 import numpy.typing as npt
 
 
-class Metrics(NamedTuple):
+@dataclass
+class Metrics:
     mean: npt.NDArray[Any]
-    std: npt.NDArray[Any]
+    var: npt.NDArray[Any]
     min: npt.NDArray[Any]
     max: npt.NDArray[Any]
+
+    @property
+    def std(self) -> npt.NDArray[Any]:
+        return np.sqrt(self.var)
 
 
 class MetricsAccumulator:
@@ -31,21 +37,30 @@ class MetricsAccumulator:
                     sample,
                 ]
             )
+        if isinstance(axis, int) and not isinstance(sample, float):
+            batch_count = sample.shape[axis]
+        elif isinstance(axis, Sequence) and not isinstance(sample, float):
+            batch_count = int(np.prod([sample.shape[i] for i in axis]))
+        else:
+            batch_count = 1
         batch_mean = sample.mean(axis=axis)
-        batch_var = sample.std(axis=axis)
+        batch_var = sample.var(axis=axis)
         batch_min = sample.min(axis=axis)
         batch_max = sample.max(axis=axis)
-        self._count += 1
         delta = batch_mean - self._state.mean
-        new_mean = self._state.mean + delta / self._count
-        delta2 = batch_mean - new_mean
-        self._m2 = self._m2 + delta * delta2
-        new_stddev = np.sqrt(
-            self._m2 / (self._count - 1) if self._count > 1 else batch_var
+        new_mean = self._state.mean + delta * batch_count / (self._count + batch_count)
+        m_a = self._state.var * self._count
+        m_b = batch_var * batch_count
+        self._m2 = (
+            m_a
+            + m_b
+            + np.square(delta) * self._count * batch_count / (self._count + batch_count)
         )
+        new_var = self._m2 / (self._count + batch_count)
+        self._count += batch_count
         self._state = Metrics(
             new_mean,
-            new_stddev,
+            new_var,
             np.minimum(self._state.min if self._count > 1 else batch_min, batch_min),
             np.maximum(self._state.max if self._count > 1 else batch_max, batch_max),
         )

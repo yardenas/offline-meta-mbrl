@@ -15,6 +15,7 @@ training:
   precision: 32
   parallel_envs: 20
   task_batch_size: 20
+  scale_reward: 1.
 
 sadam:
   replay_buffer:

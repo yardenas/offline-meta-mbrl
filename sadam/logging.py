@@ -52,7 +52,8 @@ class TrainingLogger:
                 },
                 step,
             )
-            table.append([k, *list(v.result)])
+            result = v.result
+            table.append([k, result.mean, result.std, result.min, result.max])
             v.reset_states()
         print(
             tabulate(

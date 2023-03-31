@@ -4,6 +4,7 @@ from hydra import compose, initialize
 
 from sadam import training
 from sadam.trainer import Trainer
+from sadam.trajectory import TrajectoryData
 
 
 def test_training():
@@ -56,6 +57,7 @@ def test_model_learning():
                 "training.task_batch_size=5",
                 "training.parallel_envs=5",
                 "training.render_episodes=0",
+                "training.scale_reward=0.1",
                 "sadam.model.n_layers=2",
                 "sadam.model.hidden_size=64",
                 "sadam.model.hippo_n=16",
@@ -82,19 +84,30 @@ def test_model_learning():
 
     with Trainer(cfg, make_env, task_sampler) as trainer:
         assert trainer.agent is not None and trainer.env is not None
-        from sadam.sadam import SAdaM
+        from sadam.sadam import SAdaM, _normalize
 
+        rs = np.random.RandomState(0)
         SAdaM.__call__ = lambda self, observation: np.tile(
-            trainer.env.action_space.sample(),  # type: ignore
+            rs.uniform(-1.0, 1.0, trainer.env.action_space.shape),  # type: ignore
             (
                 cfg.training.task_batch_size,
                 1,
             ),
         )
-        trainer.train(epochs=5)
+        trainer.train(epochs=3)
     agent = trainer.agent
     assert agent is not None
     trajectories = training.interact(agent, trainer.env, 1, False)[0].as_numpy()
+    normalize = lambda x: _normalize(
+        x, agent.obs_normalizer.result.mean, agent.obs_normalizer.result.std
+    )
+    trajectories = TrajectoryData(
+        normalize(trajectories.observation),
+        normalize(trajectories.next_observation),
+        trajectories.action,
+        trajectories.reward,
+        trajectories.cost,
+    )
     hidden, onestep_predictions = jax.vmap(agent.model)(
         trajectories.observation, trajectories.action
     )

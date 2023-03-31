@@ -108,27 +108,18 @@ class SAdaM:
         return jax.vmap(solve)(observation, hidden)
 
     def observe(self, trajectory: TrajectoryData):
-        # self.obs_normalizer.update_state(
-        #     np.concatenate(
-        #         [trajectory.observation, trajectory.next_observation[:, -1:]], axis=1
-        #     ),
-        #     axis=(0, 1),
-        # )
-        mean, stddev, *_ = self.obs_normalizer.result
-        standardized_obs = _normalize(
-            trajectory.observation,
-            mean,
-            stddev,
+        self.obs_normalizer.update_state(
+            np.concatenate(
+                [trajectory.observation, trajectory.next_observation[:, -1:]], axis=1
+            ),
+            axis=(0, 1),
         )
-        standardized_next_obs = _normalize(
-            trajectory.next_observation,
-            mean,
-            stddev,
-        )
+        results = self.obs_normalizer.result
+        normalize = lambda x: _normalize(x, results.mean, results.std)
         self.replay_buffer.add(
             TrajectoryData(
-                standardized_obs,
-                standardized_next_obs,
+                normalize(trajectory.observation),
+                normalize(trajectory.next_observation),
                 trajectory.action,
                 trajectory.reward,
                 trajectory.cost,
