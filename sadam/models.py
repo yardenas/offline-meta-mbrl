@@ -111,11 +111,10 @@ class Model(eqx.Module):
         horizon,
         initial_state,
         initial_hidden,
+        key,
         action_sequence=None,
         policy=None,
         ssm=None,
-        *,
-        key
     ):
         def f(carry, x):
             prev_hidden, prev_state = carry
@@ -139,6 +138,7 @@ class Model(eqx.Module):
             action_sequence = [None] * horizon
         else:
             assert len(action_sequence) == horizon
+        assert all(x.ndim == 2 for x in initial_hidden)
         init = (initial_hidden, initial_state)
         inputs = (action_sequence, jax.random.split(key, horizon))
         _, out = jax.lax.scan(

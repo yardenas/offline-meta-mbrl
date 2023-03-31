@@ -26,7 +26,7 @@ sadam:
     hippo_n: 64
     hidden_size: 128
   model_optimizer:
-    lr: 1e-3
+    lr: 3e-4
     eps: 1e-5
     clip: 0.5
   cem:

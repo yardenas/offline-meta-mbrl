@@ -95,14 +95,67 @@ def test_model_learning():
     agent = trainer.agent
     assert agent is not None
     trajectories = training.interact(agent, trainer.env, 1, False)[0].as_numpy()
-    _, one_step_predictions = jax.vmap(agent.model)(
+    hidden, onestep_predictions = jax.vmap(agent.model)(
         trajectories.observation, trajectories.action
     )
-    reward_mse = np.mean(
-        (one_step_predictions.reward.squeeze(-1) - trajectories.reward) ** 2
+    assert hidden is not None
+    context = 10
+    horizon = trajectories.observation.shape[1] - context
+    sample = lambda obs, hidden, acs: agent.model.sample(
+        horizon,
+        obs,
+        hidden,
+        action_sequence=acs,
+        ssm=agent.model.ssm,
+        key=jax.random.PRNGKey(0),
     )
-    obs_mse = np.mean(
-        (one_step_predictions.next_state - trajectories.next_observation) ** 2
+    multistep_predictions = jax.vmap(sample)(
+        trajectories.observation[:, context], hidden, trajectories.action[:, context:]
     )
-    print(f"Reward MSE: {reward_mse}")
-    print(f"Observation MSE: {obs_mse}")
+    onestep_reward_mse = np.mean(
+        (onestep_predictions.reward.squeeze(-1) - trajectories.reward) ** 2
+    )
+    onestep_obs_mse = np.mean(
+        (onestep_predictions.next_state - trajectories.next_observation) ** 2
+    )
+    print(f"One step Reward MSE: {onestep_reward_mse}")
+    print(f"One step Observation MSE: {onestep_obs_mse}")
+    multistep_reward_mse = np.mean(
+        (multistep_predictions.reward.squeeze(-1) - trajectories.reward[:, context:])
+        ** 2
+    )
+    multistep_obs_mse = np.mean(
+        (multistep_predictions.next_state - trajectories.next_observation[:, context:])
+        ** 2
+    )
+    print(f"Multistep step Reward MSE: {multistep_reward_mse}")
+    print(f"Multistep Observation MSE: {multistep_obs_mse}")
+    plot(trajectories.next_observation, multistep_predictions.next_state, context)
+
+
+def plot(y, y_hat, context):
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    t = np.arange(y.shape[1])
+
+    plt.figure(figsize=(10, 5), dpi=600)
+    for i in range(5):
+        plt.subplot(3, 4, i + 1)
+        plt.plot(t, y[i, :, 2], "b.", label="observed")
+        plt.plot(
+            t[context:],
+            y_hat[i, :, 2],
+            "r",
+            label="prediction",
+            linewidth=1.0,
+        )
+        ax = plt.gca()
+        ax.xaxis.set_ticks_position("bottom")
+        ax.yaxis.set_ticks_position("left")
+        ax.spines["left"].set_position(("data", 0))
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.axvline(context, color="k", linestyle="--", linewidth=1.0)
+    plt.tight_layout()
+    plt.show()
