@@ -117,9 +117,9 @@ class EpisodicAsync:
     def call_wait(self, **kwargs):
         return self._receive()
 
-    def render(self, mode="human"):
+    def render(self):
         name = "render"
-        args = (mode,)
+        args = ()
         kwargs = dict()
         payload = name, args, kwargs
         max_render = min(5, len(self.parents))

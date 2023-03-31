@@ -35,5 +35,5 @@ sadam:
     num_iters: 10
     num_elite: 10
     stop_cond: 0.1
-  plan_horizon: 10
+  plan_horizon: 15
   update_steps: 100
