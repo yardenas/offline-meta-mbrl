@@ -44,10 +44,7 @@ class Trainer:
             self.config.training.time_limit // self.config.training.action_repeat
         )
         self.env = episodic_async_env.EpisodicAsync(
-            self.make_env,
-            self.config.training.parallel_envs,
-            time_limit,
-            self.config.training.scale_reward,
+            self.make_env, self.config.training.parallel_envs, time_limit
         )
         # Get next batch of tasks.
         tasks = next(utils.grouper(self.tasks(train=True), self.env.num_envs))

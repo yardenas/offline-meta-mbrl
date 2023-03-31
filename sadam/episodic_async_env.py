@@ -14,7 +14,6 @@ from gymnasium.spaces import Box
 from gymnasium.wrappers.clip_action import ClipAction
 from gymnasium.wrappers.rescale_action import RescaleAction
 from gymnasium.wrappers.time_limit import TimeLimit
-from gymnasium.wrappers.transform_reward import TransformReward
 
 
 class Protocol(Enum):
@@ -34,15 +33,10 @@ class Protocol(Enum):
 # in the main process.)
 class EpisodicAsync:
     def __init__(
-        self,
-        ctor: Callable[[], Env],
-        vector_size: int = 1,
-        time_limit: int = 1000,
-        scale_reward: float = 1.0,
+        self, ctor: Callable[[], Env], vector_size: int = 1, time_limit: int = 1000
     ):
         self.env_fn = cloudpickle.dumps(ctor)
         self.time_limit = time_limit
-        self.reward_scale = scale_reward
         self.parents = []
         self.processes = []
         for _ in range(vector_size):
@@ -58,10 +52,7 @@ class EpisodicAsync:
 
     def _make_worker(self):
         parent, child = mp.Pipe()
-        process = mp.Process(
-            target=_worker,
-            args=(self.env_fn, child, self.time_limit, self.reward_scale),
-        )
+        process = mp.Process(target=_worker, args=(self.env_fn, child, self.time_limit))
         return parent, process
 
     @functools.lru_cache
@@ -179,13 +170,12 @@ class EpisodicAsync:
         return outs
 
 
-def _worker(ctor, conn, time_limit, scale_reward):
+def _worker(ctor, conn, time_limit):
     try:
         env = TimeLimit(cloudpickle.loads(ctor)(), time_limit)
         env = RescaleAction(env, -1.0, 1.0)
         env.action_space = Box(-1.0, 1.0, env.action_space.shape, np.float32)
         env = ClipAction(env)
-        env = TransformReward(env, lambda r: r * scale_reward)
         while True:
             try:
                 # Only block for short times to have keyboard exceptions be raised.
