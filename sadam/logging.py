@@ -70,7 +70,7 @@ class TrainingLogger:
         images: npt.ArrayLike,
         step: int,
         name: str = "policy",
-        fps: int = 30,
+        fps: int | float = 30,
         flush: bool = False,
     ):
         # (N, T, C, H, W)

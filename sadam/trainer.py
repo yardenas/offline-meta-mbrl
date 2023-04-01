@@ -122,6 +122,7 @@ class Trainer:
                 np.asarray(summary.videos)[0].swapaxes(0, 1)[:5],
                 step,
                 "video",
+                30 / config.training.action_repeat,
             )
 
     def get_env_random_state(self):
