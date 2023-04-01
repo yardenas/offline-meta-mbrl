@@ -52,6 +52,7 @@ def interact(
                 np_trajectory = trajectory.as_numpy()
                 if train:
                     agent.observe(np_trajectory)
+                agent.reset()
                 log_results(np_trajectory, agent.logger, agent.episodes)
                 render_episodes = max(render_episodes - 1, 0)
                 observations = environment.reset()

@@ -130,8 +130,10 @@ class SAdaM:
         )
         self.train()
         self.ssm = self.model.ssm
-        self.hidden = None
         self.episodes += 1
+
+    def reset(self):
+        self.hidden = None
 
     def train(self):
         for batch in self.replay_buffer.sample(self.config.sadam.update_steps):
