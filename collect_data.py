@@ -9,18 +9,24 @@ from gymnasium.envs.classic_control import pendulum
 from gymnasium.wrappers.rescale_action import RescaleAction
 from gymnasium.wrappers.time_limit import TimeLimit
 
-EPISODE_STEPS = 100
+EPISODE_STEPS = 150
+
+
+# def controller():
+#     """God help me, why not just use a class for this?"""
+#     action = 0.0
+#     while True:
+#         keys = pygame.key.get_pressed()
+#         action += (keys[pygame.K_RIGHT]) * 0.25
+#         action -= (keys[pygame.K_LEFT]) * 0.25
+#         action = np.clip(action, -1.0, 1.0)
+#         yield action
 
 
 def controller():
-    """God help me, why not just use a class for this?"""
-    action = 0.0
+    rs = np.random.RandomState(0)
     while True:
-        keys = pygame.key.get_pressed()
-        action += (keys[pygame.K_RIGHT]) * 0.25
-        action -= (keys[pygame.K_LEFT]) * 0.25
-        action = np.clip(action, -1.0, 1.0)
-        yield action
+        yield rs.uniform(-1, 1)
 
 
 class RotatedPendulum(pendulum.PendulumEnv):
@@ -42,7 +48,7 @@ class RotatedPendulum(pendulum.PendulumEnv):
 
         newthdot = (
             thdot
-            + (3 * g / (2 * l) * np.sin(th + self.angle) + 3.0 / (m * l**2) * u) * dt
+            + (3 * g / (2 * l) * np.sin(th - self.angle) + 3.0 / (m * l**2) * u) * dt
         )
         newthdot = np.clip(newthdot, -self.max_speed, self.max_speed)
         newth = th + newthdot * dt
@@ -95,8 +101,8 @@ def trial(num_episodes, gravity_angle, append_fn):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_episodes", type=int, default=1)
-    parser.add_argument("--num_trials", type=int, default=25)
+    parser.add_argument("--num_episodes", type=int, default=2)
+    parser.add_argument("--num_trials", type=int, default=200)
     parser.add_argument("--seed", type=int, default=123)
     args = parser.parse_args()
     dummy = gym.make("Pendulum-v1")
@@ -107,7 +113,7 @@ def main():
         dummy.action_space.shape,
     )
     rng = np.random.default_rng(args.seed)
-    for trial_id, gravity in enumerate(rng.uniform(0.1, 2, args.num_trials)):
+    for trial_id, gravity in enumerate(rng.uniform(-3.142, 3.142, args.num_trials)):
         append = functools.partial(data.append, trial_id)
         trial(args.num_episodes, gravity, append)
     now_str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")

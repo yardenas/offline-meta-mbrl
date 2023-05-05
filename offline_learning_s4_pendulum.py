@@ -87,7 +87,7 @@ class Model(eqx.Module):
             return hidden_states, x
 
     def sample(self, horizon, initial_state, inputs=None, *, key=None):
-        sequence_length = horizon if inputs is None else inputs.shape[0]
+        sequence_length = 84
         ssms = [layer.cell.ssm(sequence_length) for layer in self.layers]
 
         def f(carry, x):
@@ -131,7 +131,7 @@ def dataloader(arrays, batch_size, *, key):
 
 def get_data(data_path, sequence_length):
     obs, action, reward = np.load(data_path).values()
-    obs, action, reward = [x.squeeze(0) for x in (obs, action, reward)]
+    obs, action, reward = [x.reshape(-1, *x.shape[2:]) for x in (obs, action, reward)]
 
     def normalize(x):
         mean = x.mean(axis=(0))
@@ -154,7 +154,7 @@ def get_data(data_path, sequence_length):
 
 
 def main(
-    data_path="data-1-25-2023-02-24-15:54.npz",
+    data_path="data-200-2-2023-05-05-16:40.npz",
     batch_size=32,
     learning_rate=1e-3,
     steps=500,
@@ -211,12 +211,13 @@ def main(
         print(f"step={step}, loss={loss}")
     x, y = next(iter_data)
     hidden = [np.tile(x, (batch_size, 1, 1)) for x in model.init_state]
-    y_hat = jax.vmap(model.sample, (None, 0, 0))(1, (hidden, x[:, 0]), x)
+    context = 25
+    y_hat = jax.vmap(model.sample, (None, 0, 0))(context, (hidden, x[:, 0]), x)
     print(f"MSE: {np.mean((y - y_hat)**2)}")
-    plot(y, y_hat)
+    plot(y, y_hat, context)
 
 
-def plot(y, y_hat):
+def plot(y, y_hat, context):
     import matplotlib.pyplot as plt
 
     t = np.arange(y.shape[1])
@@ -238,6 +239,7 @@ def plot(y, y_hat):
         ax.spines["left"].set_position(("data", 0))
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        ax.axvline(context, color="k", linestyle="--", linewidth=1.0)
     plt.tight_layout()
     plt.show()
 
